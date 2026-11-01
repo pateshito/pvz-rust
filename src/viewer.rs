@@ -27,8 +27,16 @@ pub fn setup_test_mode(
         .position(|a| a.name == "anim_walk" || a.name == "anim_idle" || a.name == "anim_full_idle")
         .unwrap_or(0);
 
+    let initial_state = ViewerState {
+        current: initial_anim,
+        time: 0.0,
+        paused: false,
+        moving: false,
+        character,
+    };
+
     commands.spawn((
-        Text::new(""),
+        Text::new(hud_text(&initial_state, data)),
         TextFont::from_font_size(18.0),
         TextColor(Color::srgb(0.9, 0.9, 0.9)),
         Node {
@@ -144,13 +152,7 @@ pub fn setup_test_mode(
         character, count, skipped
     );
 
-    commands.insert_resource(ViewerState {
-        current: initial_anim,
-        time: 0.0,
-        paused: false,
-        moving: false,
-        character,
-    });
+    commands.insert_resource(initial_state);
 }
 
 pub fn cleanup_test_mode(mut commands: Commands, query: Query<Entity, With<TestModeEntity>>) {
@@ -190,29 +192,35 @@ pub fn switch_animation(
         return;
     }
 
-    let mut dirty = false;
+    // `restart`: cambiar de animación o pulsar Space reinicia el tiempo.
+    // `refresh_hud`: pausa y movimiento solo actualizan el texto, sin tocar el tiempo.
+    let mut restart = false;
+    let mut refresh_hud = false;
     if input.just_pressed(KeyCode::ArrowRight) {
         state.current = (state.current + 1) % n;
-        dirty = true;
+        restart = true;
     }
     if input.just_pressed(KeyCode::ArrowLeft) {
         state.current = (state.current + n - 1) % n;
-        dirty = true;
+        restart = true;
     }
     if input.just_pressed(KeyCode::Space) {
-        state.time = 0.0;
+        restart = true;
     }
     if input.just_pressed(KeyCode::KeyP) {
         state.paused = !state.paused;
-        dirty = true;
+        refresh_hud = true;
     }
     if input.just_pressed(KeyCode::KeyM) {
         state.moving = !state.moving;
-        dirty = true;
+        refresh_hud = true;
     }
 
-    if dirty {
+    if restart {
         state.time = 0.0;
+    }
+
+    if restart || refresh_hud {
         let s = hud_text(&state, data);
         for mut t in &mut text {
             t.0 = s.clone();
@@ -267,10 +275,12 @@ pub fn play_animation(
                 // Cambiar imagen si el track usa múltiples sprites (ej: blink1/blink2)
                 if let Some(ref new_img) = r.image {
                     if part.current_image.as_deref() != Some(new_img.as_str()) {
+                        // Se marca como procesada aunque falte el archivo, para no
+                        // volver a consultar el disco en cada frame.
+                        part.current_image = Some(new_img.clone());
                         if let Some(rel) = image_to_path(new_img, state.character) {
                             if asset_exists(&rel) {
                                 sprite.image = asset_server.load(&rel);
-                                part.current_image = Some(new_img.clone());
                             }
                         }
                     }

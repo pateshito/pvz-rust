@@ -1,7 +1,8 @@
 use crate::reanim::ReanimData;
 use crate::resources::ViewerState;
 use crate::Character;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+use std::sync::OnceLock;
 
 pub const BASE_ZOMBIE_TRACKS: &[&str] = &[
     "anim_head1",
@@ -77,7 +78,8 @@ pub fn image_to_path(internal: &str, character: Character) -> Option<String> {
                 "ANIM_SPROUT" => "PeaShooter_sprout.png",
                 "HEADLEAF_FARTHEST" => "PeaShooter_headleaf_farthest.png",
                 "HEADLEAF_3RDFARTHEST" => "PeaShooter_headleaf_3rdfarthest.png",
-                "HEADLEAF_2RDFARTHEST" => "PeaShooter_headleaf_2ndfarthest.png",
+                // "2RD" es el nombre original de PopCap; el archivo también usa "2rd".
+                "HEADLEAF_2RDFARTHEST" => "PeaShooter_headleaf_2rdfarthest.png",
                 "HEADLEAF_NEAREST" => "PeaShooter_headleaf_nearest.png",
                 "HEADLEAF_TIP_TOP" => "PeaShooter_headleaf_tip_top.png",
                 "HEADLEAF_TIP_BOTTOM" => "PeaShooter_headleaf_tip_bottom.png",
@@ -107,11 +109,28 @@ pub fn image_to_path(internal: &str, character: Character) -> Option<String> {
     }
 }
 
+/// Carpeta `assets/`, resuelta en tiempo de ejecución con la misma lógica que usa
+/// Bevy: `BEVY_ASSET_ROOT`, luego `CARGO_MANIFEST_DIR` (con `cargo run`) y, por
+/// último, la carpeta del ejecutable. Así el binario sigue funcionando si se mueve.
+pub fn assets_dir() -> &'static Path {
+    static ASSETS_DIR: OnceLock<PathBuf> = OnceLock::new();
+    ASSETS_DIR.get_or_init(|| {
+        let base = if let Ok(root) = std::env::var("BEVY_ASSET_ROOT") {
+            PathBuf::from(root)
+        } else if let Ok(manifest) = std::env::var("CARGO_MANIFEST_DIR") {
+            PathBuf::from(manifest)
+        } else {
+            std::env::current_exe()
+                .ok()
+                .and_then(|exe| exe.parent().map(Path::to_path_buf))
+                .unwrap_or_else(|| PathBuf::from("."))
+        };
+        base.join("assets")
+    })
+}
+
 pub fn asset_exists(rel: &str) -> bool {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("assets")
-        .join(rel)
-        .exists()
+    assets_dir().join(rel).exists()
 }
 
 pub fn hud_text(state: &ViewerState, data: &ReanimData) -> String {
