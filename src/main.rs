@@ -1,5 +1,6 @@
 mod components;
 mod menu;
+mod peashooter;
 mod reanim;
 mod resources;
 mod systems;
@@ -46,10 +47,15 @@ fn main() {
 
     let zombie_data =
         load_reanim_or_exit("Zombie", &assets.join("animations/Zombie/Zombie.reanim"));
-    let peashooter_data = load_reanim_or_exit(
+    let mut peashooter_data = load_reanim_or_exit(
         "PeaShooter",
         &assets.join("animations/PeaShooter/PeaShooter.reanim"),
     );
+    // El PeaShooter solo tiene 2 estados (idle / shooting) con la planta completa.
+    if let Err(e) = peashooter::build_states(&mut peashooter_data) {
+        eprintln!("{e}");
+        std::process::exit(1);
+    }
 
     App::new()
         .add_plugins(
