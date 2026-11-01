@@ -134,17 +134,17 @@ pub fn asset_exists(rel: &str) -> bool {
 }
 
 pub fn hud_text(state: &ViewerState, data: &ReanimData) -> String {
-    if data.animations.is_empty() {
+    if data.states.is_empty() {
         return format!(
             "{:?} - sin animaciones\n←/→: N/A | Space | P | M | Esc",
             state.character
         );
     }
-    let a = &data.animations[state.current % data.animations.len()];
+    let a = &data.states[state.current % data.states.len()];
     format!(
         "[{}/{}] {:?} - {}\n←/→: cambiar | Space: reiniciar | P: pausa{} | M: mover{} | Esc: menú",
-        state.current % data.animations.len() + 1,
-        data.animations.len(),
+        state.current % data.states.len() + 1,
+        data.states.len(),
         state.character,
         a.name,
         if state.paused { " [PAUSADO]" } else { "" },

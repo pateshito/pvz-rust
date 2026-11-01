@@ -13,12 +13,22 @@ pub struct Resolved {
     pub active: bool,
 }
 
+/// A qué parte del personaje pertenece un track. Un estado puede reproducir
+/// el cuerpo y la cabeza desde rangos de frames distintos (ver `AnimState`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub enum PartGroup {
+    #[default]
+    Body,
+    Head,
+}
+
 #[derive(Clone, Debug)]
 pub struct Track {
     pub name: String,
     pub frames: Vec<Option<Resolved>>,
     pub raw_f: Vec<Option<i32>>,
     pub has_image: bool,
+    pub group: PartGroup,
 }
 
 #[derive(Clone, Debug)]
@@ -28,11 +38,29 @@ pub struct AnimRange {
     pub end: usize,
 }
 
+/// Un estado que se puede reproducir (lo que el visor y, más adelante, la
+/// partida seleccionan). Puede ser un rango del `.reanim` tal cual, o una
+/// combinación de rangos: el cuerpo y la cabeza leen frames de sitios distintos.
+#[derive(Clone, Debug)]
+pub struct AnimState {
+    pub name: String,
+    /// Cantidad de frames del bucle.
+    pub len: usize,
+    /// Primer frame de origen para los tracks del cuerpo.
+    pub body_start: usize,
+    /// Primer frame de origen para los tracks de la cabeza.
+    pub head_start: usize,
+    /// Desplazamiento horizontal extra de la cabeza por frame (para que siga
+    /// el balanceo del tallo). Vacío = sin desplazamiento.
+    pub head_dx: Vec<f32>,
+}
+
 #[derive(Clone)]
 pub struct ReanimData {
     pub fps: f32,
     pub tracks: Vec<Track>,
     pub animations: Vec<AnimRange>,
+    pub states: Vec<AnimState>,
 }
 
 pub fn parse_reanim(path: &Path) -> Result<ReanimData, String> {
@@ -129,6 +157,7 @@ pub fn parse_reanim(path: &Path) -> Result<ReanimData, String> {
             frames,
             raw_f,
             has_image,
+            group: PartGroup::Body,
         });
     }
 
@@ -176,9 +205,24 @@ pub fn parse_reanim(path: &Path) -> Result<ReanimData, String> {
         println!("   🎬 [{}] {} -> frames {}..{}", i, a.name, a.start, a.end);
     }
 
+    // Por defecto, un estado por cada rango marcado en el `.reanim`, con cuerpo y
+    // cabeza leyendo del mismo sitio. Personajes con reglas propias (PeaShooter)
+    // reemplazan esta lista después de cargar.
+    let states = animations
+        .iter()
+        .map(|a| AnimState {
+            name: a.name.clone(),
+            len: a.end.saturating_sub(a.start) + 1,
+            body_start: a.start,
+            head_start: a.start,
+            head_dx: Vec::new(),
+        })
+        .collect();
+
     Ok(ReanimData {
         fps,
         tracks,
         animations,
+        states,
     })
 }

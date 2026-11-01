@@ -1,4 +1,5 @@
 use crate::components::{BackButton, CharacterPart, CharacterRoot, HudText};
+use crate::reanim::PartGroup;
 use crate::resources::{CharacterLibraries, SelectedCharacter, ViewerState};
 use crate::utils::{asset_exists, get_allowlist, hud_text, image_to_path};
 use crate::Character;
@@ -22,9 +23,14 @@ pub fn setup_test_mode(
     commands.spawn((Camera2d, TestModeEntity));
 
     let initial_anim = data
-        .animations
+        .states
         .iter()
-        .position(|a| a.name == "anim_walk" || a.name == "anim_idle" || a.name == "anim_full_idle")
+        .position(|s| {
+            matches!(
+                s.name.as_str(),
+                "anim_walk" | "anim_idle" | "anim_full_idle" | "idle"
+            )
+        })
         .unwrap_or(0);
 
     let initial_state = ViewerState {
@@ -187,7 +193,7 @@ pub fn switch_animation(
         return;
     }
 
-    let n = data.animations.len();
+    let n = data.states.len();
     if n == 0 {
         return;
     }
@@ -249,17 +255,25 @@ pub fn play_animation(
         state.time += time.delta_secs();
     }
 
-    if data.animations.is_empty() {
+    if data.states.is_empty() {
         return;
     }
 
-    let anim = &data.animations[state.current % data.animations.len()];
-    let len = anim.end.saturating_sub(anim.start) + 1;
-    let frame = anim.start + ((state.time * data.fps) as usize % len);
+    let anim = &data.states[state.current % data.states.len()];
+    // Frame dentro del bucle del estado (0..len). Cada grupo de piezas lo
+    // traduce a su propio frame de origen.
+    let local = (state.time * data.fps) as usize % anim.len.max(1);
 
     for (mut xf, mut sprite, mut vis, mut part) in &mut parts {
         let track = &data.tracks[part.track];
         let is_prop = track.name.starts_with("anim_");
+        let is_head = track.group == PartGroup::Head;
+        let frame = local + if is_head { anim.head_start } else { anim.body_start };
+        let dx = if is_head {
+            anim.head_dx.get(local).copied().unwrap_or(0.0)
+        } else {
+            0.0
+        };
 
         match track.frames.get(frame).and_then(|r| r.as_ref()) {
             Some(r) => {
@@ -268,7 +282,7 @@ pub fn play_animation(
                     continue;
                 }
                 *vis = Visibility::Inherited;
-                xf.translation = Vec3::new(r.x, -r.y, xf.translation.z);
+                xf.translation = Vec3::new(r.x + dx, -r.y, xf.translation.z);
                 xf.scale = Vec3::new(r.sx, r.sy, 1.0);
                 xf.rotation = Quat::from_rotation_z(-r.kx.to_radians());
 
