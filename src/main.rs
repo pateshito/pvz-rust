@@ -7,9 +7,10 @@ mod utils;
 mod viewer;
 
 use bevy::prelude::*;
-use reanim::parse_reanim;
+use reanim::{parse_reanim, ReanimData};
 use resources::{CharacterLibraries, SelectedCharacter};
-use std::path::PathBuf;
+use std::path::Path;
+use utils::assets_dir;
 
 #[derive(States, Default, Debug, Clone, PartialEq, Eq, Hash)]
 pub enum AppState {
@@ -24,17 +25,31 @@ pub enum Character {
     PeaShooter,
 }
 
+/// Lee un `.reanim`; si falla, muestra el error y termina sin `panic!`.
+fn load_reanim_or_exit(label: &str, path: &Path) -> ReanimData {
+    println!("🔍 Leyendo {}: {:?}", label, path);
+    match parse_reanim(path) {
+        Ok(data) => data,
+        Err(e) => {
+            eprintln!("{e}");
+            eprintln!(
+                "   Carpeta de assets esperada: {:?} (se puede cambiar con BEVY_ASSET_ROOT)",
+                assets_dir()
+            );
+            std::process::exit(1);
+        }
+    }
+}
+
 fn main() {
-    let manifest = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let assets = assets_dir();
 
-    let zombie_path = manifest.join("assets/animations/Zombie/Zombie.reanim");
-    let peashooter_path = manifest.join("assets/animations/PeaShooter/PeaShooter.reanim");
-
-    println!("🔍 Leyendo Zombie: {:?}", zombie_path);
-    let zombie_data = parse_reanim(&zombie_path);
-
-    println!("🔍 Leyendo PeaShooter: {:?}", peashooter_path);
-    let peashooter_data = parse_reanim(&peashooter_path);
+    let zombie_data =
+        load_reanim_or_exit("Zombie", &assets.join("animations/Zombie/Zombie.reanim"));
+    let peashooter_data = load_reanim_or_exit(
+        "PeaShooter",
+        &assets.join("animations/PeaShooter/PeaShooter.reanim"),
+    );
 
     App::new()
         .add_plugins(

@@ -1,6 +1,6 @@
 use regex::Regex;
 use std::fs;
-use std::path::PathBuf;
+use std::path::Path;
 
 #[derive(Clone, Debug)]
 pub struct Resolved {
@@ -35,9 +35,9 @@ pub struct ReanimData {
     pub animations: Vec<AnimRange>,
 }
 
-pub fn parse_reanim(path: &PathBuf) -> ReanimData {
-    let content =
-        fs::read_to_string(path).unwrap_or_else(|e| panic!("❌ No se pudo leer {:?}: {}", path, e));
+pub fn parse_reanim(path: &Path) -> Result<ReanimData, String> {
+    let content = fs::read_to_string(path)
+        .map_err(|e| format!("❌ No se pudo leer {:?}: {}", path, e))?;
 
     let fps = Regex::new(r"<fps>(\d+)</fps>")
         .unwrap()
@@ -176,9 +176,9 @@ pub fn parse_reanim(path: &PathBuf) -> ReanimData {
         println!("   🎬 [{}] {} -> frames {}..{}", i, a.name, a.start, a.end);
     }
 
-    ReanimData {
+    Ok(ReanimData {
         fps,
         tracks,
         animations,
-    }
+    })
 }
