@@ -1,0 +1,38 @@
+[package]
+name = "PVZ-qwen"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+regex = "1.10" # Para parsear el .reanim rápidamente
+# Motor principal - usa la última versión estable
+bevy = "0.15"
+
+# Generación de números aleatorios (para spawneo de zombies)
+rand = "0.8"
+
+# Carga de assets estructurada (muy recomendado)
+bevy_asset_loader = { version = "0.22", features = ["2d"] }
+
+# Serialización (opcional, útil para guardar progreso/config)
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+
+[dev-dependencies]
+# Hot-reloading para desarrollo rápido
+bevy-inspector-egui = "0.28"
+
+# === OPTIMIZACIONES CRÍTICAS PARA BEVY ===
+# Sin esto, Bevy corre MUY lento en debug
+[profile.dev]
+opt-level = 1
+
+[profile.dev.package."*"]
+opt-level = 3
+
+# Perfil release optimizado
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+strip = true
