@@ -212,16 +212,34 @@ pub fn parse_reanim(path: &Path) -> Result<ReanimData, String> {
     // Por defecto, un estado por cada rango marcado en el `.reanim`, con cuerpo y
     // cabeza leyendo del mismo sitio. Personajes con reglas propias (PeaShooter)
     // reemplazan esta lista después de cargar.
-    let states = animations
-        .iter()
-        .map(|a| AnimState {
-            name: a.name.clone(),
-            len: a.end.saturating_sub(a.start) + 1,
-            body_start: a.start,
-            head_start: a.start,
-            head_dx: Vec::new(),
-        })
-        .collect();
+    //
+    // Soles, proyectiles y varios props no traen tracks `anim_*`. Sin un estado
+    // el visor no tendría nada que reproducir, así que se recorre el archivo entero.
+    let states: Vec<AnimState> = if animations.is_empty() {
+        let len = tracks.iter().map(|t| t.frames.len()).max().unwrap_or(0);
+        if len == 0 {
+            Vec::new()
+        } else {
+            vec![AnimState {
+                name: "full".into(),
+                len,
+                body_start: 0,
+                head_start: 0,
+                head_dx: Vec::new(),
+            }]
+        }
+    } else {
+        animations
+            .iter()
+            .map(|a| AnimState {
+                name: a.name.clone(),
+                len: a.end.saturating_sub(a.start) + 1,
+                body_start: a.start,
+                head_start: a.start,
+                head_dx: Vec::new(),
+            })
+            .collect()
+    };
 
     Ok(ReanimData {
         fps,
@@ -229,4 +247,40 @@ pub fn parse_reanim(path: &Path) -> Result<ReanimData, String> {
         animations,
         states,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn asset(rel: &str) -> std::path::PathBuf {
+        Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("assets")
+            .join(rel)
+    }
+
+    #[test]
+    fn sin_marcadores_se_reproduce_el_archivo_entero() {
+        let data = parse_reanim(&asset("animations/Sun/Sun.reanim")).expect("Sun.reanim");
+        let len = data
+            .tracks
+            .iter()
+            .map(|t| t.frames.len())
+            .max()
+            .unwrap_or(0);
+        assert!(len > 1, "el sol tiene varios frames");
+        assert_eq!(data.animations.len(), 0);
+        assert_eq!(data.states.len(), 1);
+        assert_eq!(data.states[0].name, "full");
+        assert_eq!(data.states[0].len, len);
+        assert_eq!(data.states[0].body_start, 0);
+    }
+
+    #[test]
+    fn los_marcadores_anim_siguen_siendo_los_estados() {
+        let data =
+            parse_reanim(&asset("animations/PeaShooter/PeaShooter.reanim")).expect("PeaShooter");
+        assert!(data.states.iter().any(|s| s.name == "anim_idle"));
+        assert!(data.states.iter().all(|s| s.name != "full"));
+    }
 }

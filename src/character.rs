@@ -4,7 +4,8 @@
 use crate::components::CharacterPart;
 use crate::reanim::{AnimState, PartGroup, ReanimData};
 use crate::resources::CharacterLibraries;
-use crate::utils::{asset_exists, image_to_path};
+use crate::utils::{asset_exists, entity_name, image_to_path};
+use crate::zombie_style::PlainStyle;
 use crate::Character;
 use bevy::prelude::*;
 
@@ -85,22 +86,46 @@ pub fn spawn_character(
             Animator::new(character, initial_state),
         ))
         .id();
-    spawn_parts(commands, asset_server, data, character, root, false);
+    spawn_parts(
+        commands,
+        asset_server,
+        data,
+        entity_name(character),
+        root,
+        false,
+    );
     root
 }
 
+/// Resultado de crear las piezas de un personaje.
+pub struct SpawnReport {
+    pub spawned: usize,
+    pub skipped: usize,
+    /// Ids que no se pudieron resolver, como mucho ocho, para el HUD.
+    pub missing: Vec<String>,
+    /// La mano donde se engancha la bandera del zombi normal, si existe.
+    pub flaghand: Option<Entity>,
+}
+
 /// Crea los sprites de las piezas visibles del personaje como hijos de `root`.
-/// Devuelve `(piezas creadas, piezas saltadas)`.
 pub fn spawn_parts(
     commands: &mut Commands,
     asset_server: &AssetServer,
     data: &ReanimData,
-    character: Character,
+    entity: &str,
     root: Entity,
     verbose: bool,
-) -> (usize, usize) {
+) -> SpawnReport {
     let mut count = 0;
     let mut skipped = 0;
+    let mut missing = Vec::new();
+    let mut flaghand = None;
+
+    let note_missing = |missing: &mut Vec<String>, image: &str, track: &str| {
+        if missing.len() < 8 {
+            missing.push(format!("{image} ({track})"));
+        }
+    };
 
     for (idx, track) in data.tracks.iter().enumerate() {
         if !track.has_image {
@@ -122,12 +147,13 @@ pub fn spawn_parts(
             }
         };
 
-        let rel = match image_to_path(&first_image, character) {
+        let rel = match image_to_path(&first_image, entity) {
             Some(p) => p,
             None => {
                 if verbose {
                     println!("⚠️  Sin mapeo para: {} (track {})", first_image, track.name);
                 }
+                note_missing(&mut missing, &first_image, &track.name);
                 skipped += 1;
                 continue;
             }
@@ -137,30 +163,42 @@ pub fn spawn_parts(
             if verbose {
                 println!("⚠️  Falta asset: {} (track {})", rel, track.name);
             }
+            note_missing(&mut missing, &first_image, &track.name);
             skipped += 1;
             continue;
         }
 
         let z = idx as f32 * 0.001;
+        let track_name = track.name.clone();
         commands.entity(root).with_children(|parent| {
-            parent.spawn((
-                Sprite {
-                    image: asset_server.load(&rel),
-                    anchor: bevy::sprite::Anchor::TopLeft,
-                    ..default()
-                },
-                Transform::from_xyz(0.0, 0.0, z),
-                Visibility::default(),
-                CharacterPart {
-                    track: idx,
-                    current_image: Some(first_image.clone()),
-                },
-            ));
+            let id = parent
+                .spawn((
+                    Sprite {
+                        image: asset_server.load(&rel),
+                        anchor: bevy::sprite::Anchor::TopLeft,
+                        ..default()
+                    },
+                    Transform::from_xyz(0.0, 0.0, z),
+                    Visibility::default(),
+                    CharacterPart {
+                        track: idx,
+                        current_image: Some(first_image.clone()),
+                    },
+                ))
+                .id();
+            if track_name == "Zombie_flaghand" {
+                flaghand = Some(id);
+            }
         });
         count += 1;
     }
 
-    (count, skipped)
+    SpawnReport {
+        spawned: count,
+        skipped,
+        missing,
+        flaghand,
+    }
 }
 
 /// Coloca una pieza según el frame `local` (0..len) del estado `anim`.
@@ -169,7 +207,8 @@ pub fn pose_part(
     data: &ReanimData,
     anim: &AnimState,
     local: usize,
-    character: Character,
+    entity: &str,
+    style: Option<PlainStyle>,
     asset_server: &AssetServer,
     xf: &mut Transform,
     sprite: &mut Sprite,
@@ -177,6 +216,14 @@ pub fn pose_part(
     part: &mut CharacterPart,
 ) {
     let track = &data.tracks[part.track];
+    // El zombi normal lleva cono, cubo, puerta y demás en el mismo archivo.
+    // El estilo decide qué grupo se ve; el frame no basta.
+    if let Some(style) = style {
+        if !style.allows(&track.name) {
+            *vis = Visibility::Hidden;
+            return;
+        }
+    }
     let is_prop = track.name.starts_with("anim_");
     let is_head = track.group == PartGroup::Head;
     let frame = local
@@ -208,7 +255,7 @@ pub fn pose_part(
                     // Se marca como procesada aunque falte el archivo, para no
                     // volver a consultar el disco en cada frame.
                     part.current_image = Some(new_img.clone());
-                    if let Some(rel) = image_to_path(new_img, character) {
+                    if let Some(rel) = image_to_path(new_img, entity) {
                         if asset_exists(&rel) {
                             sprite.image = asset_server.load(&rel);
                         }
@@ -249,7 +296,12 @@ pub fn animate_characters(
         let index = animator.state % data.states.len();
         let local = animator.local_frame(data);
         let state = &data.states[index];
-        let character = animator.character;
+        let entity = entity_name(animator.character);
+        // La partida, cuando dibuje, usa el zombi normal sin accesorios mezclados.
+        let style = match animator.character {
+            Character::Zombie => Some(PlainStyle::Normal),
+            Character::PeaShooter => None,
+        };
 
         let mut iter = parts.iter_many_mut(children);
         while let Some((mut xf, mut sprite, mut vis, mut part)) = iter.fetch_next() {
@@ -257,7 +309,8 @@ pub fn animate_characters(
                 data,
                 state,
                 local,
-                character,
+                entity,
+                style,
                 &asset_server,
                 &mut xf,
                 &mut sprite,

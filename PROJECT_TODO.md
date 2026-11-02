@@ -16,7 +16,7 @@
 | Organización | `textures/<Personaje>/`, `animations/<Personaje>/` | mismo criterio, extendido a **74 entidades** y 6 categorías más |
 | Tamaño | ~1,4 MB | **~72 MB** |
 | Verificación | manual | script reproducible + hash SHA-256 por archivo |
-| Código | visor de 2 personajes | catálogo de 74 entidades + resolución genérica + lógica de partida pura (31 tests OK) |
+| Código | visor de 2 personajes | catálogo de 74 entidades + visor de cualquiera + lógica de partida pura (35 tests OK) |
 | Documentación | ninguna | este archivo |
 
 **Lo que ya está hecho**
@@ -28,7 +28,7 @@
 - [x] Manifiesto `assets/ASSET_MANIFEST.tsv` con origen → destino, tamaño y SHA-256.
 - [x] Validador de referencias `.reanim` → texturas: `tools/validate_assets.py` (3013/3013).
 - [x] Catálogo de assets (`src/assets/catalog.rs`) y resolución genérica de imágenes (`src/assets/paths.rs`).
-- [x] `cargo test`: 31/31 tests pasan con el árbol nuevo.
+- [x] `cargo test`: 35/35 tests pasan con el árbol nuevo.
 
 **Lo que falta para “completar el proyecto”**
 
@@ -45,12 +45,12 @@ PVZ-qwen/
 ├── Cargo.toml                 Bevy 0.15, regex, rand, serde, bevy_asset_loader
 ├── Cargo.lock
 ├── src/
-│   ├── main.rs                Arranque, estados Menu/TestMode, carga de 2 reanims
+│   ├── main.rs                Arranque, estados Menu/Play/TestMode, catálogo
 │   ├── reanim.rs              Parser .reanim (regex) + modelo de tracks/estados
 │   ├── resources.rs           CharacterLibraries, SelectedCharacter, ViewerState
 │   ├── components.rs          Marcadores ECS (CharacterRoot, CharacterPart, HUD…)
-│   ├── menu.rs                Menú con 2 botones
-│   ├── viewer.rs              Render del personaje, cambio de animación, HUD
+│   ├── menu.rs                Menú Jugar/Test; Jugar aún no dibuja el tablero
+│   ├── viewer.rs              Lista de entidades, cualquier .reanim, zoom, estilos
 │   ├── systems.rs             Movimiento horizontal de prueba
 │   ├── peashooter.rs          Reglas especiales de estados del PeaShooter
 │   ├── utils.rs               Rutas de assets, nombre de entidad, hud
@@ -125,19 +125,19 @@ assets/
 
 | Módulo | Responsabilidad | Estado |
 |---|---|---|
-| `main.rs` | Carga `Zombie.reanim` y `PeaShooter.reanim`, aplica estados del PeaShooter, registra sistemas | Funciona, hardcodea 2 personajes |
+| `main.rs` | Arranque, catálogo, estados Menu/Play/TestMode | Funciona. Sigue precargando Zombie y PeaShooter para la partida |
 | `reanim.rs` | Parser XML con regex; `Track`, `Resolved`, `AnimRange`, `AnimState`; detección de rangos `anim_*` | Funcional, sin validación estricta |
 | `peashooter.rs` | Une bloques del `.reanim` en 2 estados (`idle`, `shooting`) y separa cuerpo/cabeza | Funcional, específico |
 | `utils.rs` | `assets_dir()`, `asset_exists()`, `entity_name()`, `image_to_path()` | Resolución genérica; sin tablas por personaje |
 | `assets/catalog.rs` | Escanea `animations/` y asocia cada entidad con `textures/` | 74 entidades / 146 reanims |
 | `assets/paths.rs` | Índice de texturas e imágenes; resuelve `IMAGE_REANIM_*` | 3013/3013 referencias resueltas |
-| `viewer.rs` | Spawnea un sprite por track con imagen, reproduce frames, cambia animación, HUD | Funcional, sin allowlist |
+| `viewer.rs` | Lista de las 74 entidades, cualquier `.reanim`, zoom, HUD y estilos del zombi | Funcional |
 | `character.rs` | Crea piezas y aplica pose por frame; `Animator` compartido | Listo para conectar la partida |
 | `game/board.rs` | Rejilla 5×9, celdas y coordenadas | Lógica pura + tests |
 | `game/defs.rs` | Definiciones de plantas/zombies | PeaShooter y zombie básico |
 | `game/level.rs` | Nivel de prueba, oleadas y soles | Lógica pura + tests |
 | `game/sim.rs` | Simulación: plantar, disparar, comer, ganar/perder | Lógica pura + tests |
-| `menu.rs` | Menú con 2 botones | Funcional |
+| `menu.rs` | Menú Jugar / Test. Jugar avisa de que el tablero aún no se dibuja | Funcional |
 | `systems.rs` | Mueve el personaje en X | Placeholder |
 | `resources.rs` | Recursos globales del visor | Funcional |
 
@@ -146,8 +146,10 @@ assets/
 - Leer `.reanim`, extraer tracks, frames, `x/y/kx/sx/sy`, `f` (activo) e imagen `i`.
 - Detectar rangos de animación por tracks `anim_*`.
 - Descubrir las **74 entidades** y sus **146 reanims** sin hardcodear.
+- Elegir cualquiera de esas entidades en el modo Test y reproducir sus `.reanim` (los que no tienen marcadores `anim_*` se recorren enteros).
 - Resolver **cualquier** `IMAGE_REANIM_*` (3013/3013) con índice en memoria.
 - Reproducir una animación a `fps`, con cuerpo/cabeza en rangos distintos.
+- Ver el zombi normal por estilos (cuerpo, cono, cubo, puerta, bandera, flotador) sin mezclar accesorios.
 - Cambiar imagen por frame (parpadeos).
 - Ocultar tracks inactivos.
 - Menú → visor → volver, pausa, reinicio, movimiento.
@@ -155,8 +157,6 @@ assets/
 
 **Lo que el código no sabe hacer todavía**
 
-- Elegir cualquiera de las 74 entidades desde la UI (hoy el menú ofrece 2).
-- Cargar un `.reanim` cualquiera sin tocar código (el catálogo ya lo permite, falta la UI).
 - Reproducir animaciones con `image` distinta por frame de forma completa (solo cambia si el track tiene imagen).
 - Tablero, celdas, plantas, zombies, proyectiles, soles, colisiones, oleadas.
 - UI de juego (seed packets, almanac, tienda), audio, progresión, guardado.
@@ -201,10 +201,10 @@ Detalles verificados:
 
 | Sistema del juego | Assets disponibles | Código actual |
 |---|---|---|
-| Animaciones de plantas | ✅ 40+ plantas | ❌ solo PeaShooter |
-| Animaciones de zombies | ✅ 40 variantes | ❌ solo Zombie base |
-| Texturas de reanim | ✅ 1817 | ⚠️ solo 2 personajes mapeados |
-| UI / menús / almanac | ✅ 572 imágenes | ❌ menú mínimo propio |
+| Animaciones de plantas | ✅ 40+ plantas | ⚠️ se ven en el modo Test; la partida no las usa |
+| Animaciones de zombies | ✅ 40 variantes | ⚠️ se ven en el modo Test; la partida no las usa |
+| Texturas de reanim | ✅ 1817 | ✅ resolución genérica (el visor carga la entidad elegida) |
+| UI / menús / almanac | ✅ 572 imágenes | ❌ menú mínimo propio + lista del modo Test |
 | Sonidos/música | ✅ 171 | ❌ sin audio |
 | Partículas | ✅ 194 | ❌ sin partículas |
 | Datos/fuentes | ✅ 42 | ❌ sin uso |
@@ -309,7 +309,7 @@ Objetivo de diseño:
 |---|---|---|---|
 | 1 | Catálogo de entidades inexistente | No se pueden cargar los 146 reanims sin hardcodear | P0 |
 | 2 | `image_to_path` hardcodeado | Solo funcionan 2 personajes | P0 |
-| 3 | Visor no elige personaje | No se puede explorar el catálogo | P1 |
+| 3 | Visor no elige personaje | No se puede explorar el catálogo | P1 · hecho en el modo Test |
 | 4 | Sin tablero | No hay juego | P1 |
 | 5 | Sin plantas/zombies data-driven | No hay gameplay | P1 |
 | 6 | Sin proyectiles/soles/colisiones | No hay combate | P1 |
@@ -362,17 +362,18 @@ Objetivo de diseño:
 - [ ] **P1** Soportar `<fps>`, `<track>`, `<name>`, `<t>`, `x/y/kx/sx/sy/f/i` completos.
 - [ ] **P1** Soportar imágenes por frame y cambios de imagen (parpadeos) en todos los tracks.
 - [ ] **P1** Soportar `AnimState` combinando rangos cuerpo/cabeza de forma genérica (no solo PeaShooter).
-- [ ] **P1** Soportar eventos/loops y animaciones que no son `anim_*`.
+- [ ] **P1** Soportar eventos/loops y animaciones que no son `anim_*`. El visor ya reproduce esos archivos como un estado `full`; faltan eventos y loops con nombre.
 - [ ] **P2** Tests unitarios con `.reanim` reales de varias plantas y zombies.
 
 **Criterio de aceptación:** el visor reproduce cualquier `.reanim` del catálogo sin código específico.
 
-### Fase 3 — Visor/catálogo explorable (P1)
+### Fase 3 — Visor/catálogo explorable (P1, hecho; queda pulido P2)
 
-- [ ] **P1** Pantalla de selección de entidad (lista de plantas/zombies/UI).
-- [ ] **P1** Mostrar nombre, fps, número de tracks y animaciones.
-- [ ] **P1** Cambiar animación, pausa, reinicio, zoom y movimiento.
-- [ ] **P1** Mostrar el mapeo de imágenes y avisar de assets faltantes.
+- [x] **P1** Pantalla de selección de entidad (lista de plantas/zombies/UI).
+- [x] **P1** Mostrar nombre, fps, número de tracks y animaciones.
+- [x] **P1** Cambiar animación, pausa, reinicio, zoom y movimiento.
+- [x] **P1** Mostrar el mapeo de imágenes y avisar de assets faltantes (consola al crear las piezas, y los que faltan en el HUD).
+- [x] **P1** Estilos del `Zombie.reanim` base: normal, cono, cubo, puerta, bandera y flotador. Sin esto el archivo dibuja todos los accesorios a la vez.
 - [ ] **P2** Captura/export de frames para depurar.
 - [ ] **P2** Modo “comparar” dos reanims.
 
@@ -463,8 +464,8 @@ Objetivo de diseño:
 Orden concreto para no bloquearse:
 
 1. **Catálogo + resolución genérica** (Fase 1). ✅ Hecho: desbloquea todo lo demás.
-2. **Visor de cualquier entidad** (Fase 3). Permite validar visualmente los 146 reanims.
-3. **Parser robusto + tests** (Fase 2). Evita deuda al crecer.
+2. **Visor de cualquier entidad** (Fase 3). ✅ Hecho el P1. Quedan captura de frames y el modo comparar (P2).
+3. **Parser robusto + tests** (Fase 2). Evita deuda al crecer. Los `.reanim` sin `anim_*` ya se reproducen enteros.
 4. **Tablero mínimo + PeaShooter vs zombie base** (Fases 4–7). Primer gameplay real.
 5. **Resto de plantas/zombies data-driven** (Fases 5–6).
 6. **UI/audio/progresión** (Fase 8).
@@ -524,7 +525,7 @@ cargo run
 | Resueltas (images/) | 85 |
 | Sin resolver | 0 |
 | Entidades / reanims en el catálogo | 74 / 146 |
-| `cargo test` | 31/31 OK |
+| `cargo test` | 35/35 OK |
 | `validate_assets.py --strict` | OK (0 sin resolver) |
 | Tamaño de `assets/` | ~72 MB |
 
