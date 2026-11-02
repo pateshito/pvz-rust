@@ -1,7 +1,7 @@
+use crate::character::{pose_part, spawn_parts};
 use crate::components::{BackButton, CharacterPart, CharacterRoot, HudText};
-use crate::reanim::PartGroup;
 use crate::resources::{CharacterLibraries, SelectedCharacter, ViewerState};
-use crate::utils::{asset_exists, get_allowlist, hud_text, image_to_path};
+use crate::utils::hud_text;
 use crate::Character;
 use bevy::prelude::*;
 
@@ -96,62 +96,7 @@ pub fn setup_test_mode(
         ))
         .id();
 
-    let allowlist = get_allowlist(character);
-    let mut count = 0;
-    let mut skipped = 0;
-
-    for (idx, track) in data.tracks.iter().enumerate() {
-        if !allowlist.contains(&track.name.as_str()) {
-            continue;
-        }
-
-        let first_image = match track
-            .frames
-            .iter()
-            .find_map(|r| r.as_ref().and_then(|r| r.image.clone()))
-        {
-            Some(i) => i,
-            None => {
-                println!("⚠️  Track '{}' sin imagen en ningún frame", track.name);
-                skipped += 1;
-                continue;
-            }
-        };
-
-        let rel = match image_to_path(&first_image, character) {
-            Some(p) => p,
-            None => {
-                println!("⚠️  Sin mapeo para: {} (track {})", first_image, track.name);
-                skipped += 1;
-                continue;
-            }
-        };
-
-        if !asset_exists(&rel) {
-            println!("⚠️  Falta asset: {} (track {})", rel, track.name);
-            skipped += 1;
-            continue;
-        }
-
-        let z = idx as f32 * 0.001;
-        commands.entity(root).with_children(|parent| {
-            parent.spawn((
-                Sprite {
-                    image: asset_server.load(&rel),
-                    anchor: bevy::sprite::Anchor::TopLeft,
-                    ..default()
-                },
-                Transform::from_xyz(0.0, 0.0, z),
-                Visibility::default(),
-                CharacterPart {
-                    track: idx,
-                    current_image: Some(first_image.clone()),
-                },
-                TestModeEntity,
-            ));
-        });
-        count += 1;
-    }
+    let (count, skipped) = spawn_parts(&mut commands, &asset_server, data, character, root, true);
 
     println!(
         "🎭 {:?} construido con {} partes visibles ({} saltadas)",
@@ -265,46 +210,16 @@ pub fn play_animation(
     let local = (state.time * data.fps) as usize % anim.len.max(1);
 
     for (mut xf, mut sprite, mut vis, mut part) in &mut parts {
-        let track = &data.tracks[part.track];
-        let is_prop = track.name.starts_with("anim_");
-        let is_head = track.group == PartGroup::Head;
-        let frame = local + if is_head { anim.head_start } else { anim.body_start };
-        let dx = if is_head {
-            anim.head_dx.get(local).copied().unwrap_or(0.0)
-        } else {
-            0.0
-        };
-
-        match track.frames.get(frame).and_then(|r| r.as_ref()) {
-            Some(r) => {
-                if !r.active {
-                    *vis = Visibility::Hidden;
-                    continue;
-                }
-                *vis = Visibility::Inherited;
-                xf.translation = Vec3::new(r.x + dx, -r.y, xf.translation.z);
-                xf.scale = Vec3::new(r.sx, r.sy, 1.0);
-                xf.rotation = Quat::from_rotation_z(-r.kx.to_radians());
-
-                // Cambiar imagen si el track usa múltiples sprites (ej: blink1/blink2)
-                if let Some(ref new_img) = r.image {
-                    if part.current_image.as_deref() != Some(new_img.as_str()) {
-                        // Se marca como procesada aunque falte el archivo, para no
-                        // volver a consultar el disco en cada frame.
-                        part.current_image = Some(new_img.clone());
-                        if let Some(rel) = image_to_path(new_img, state.character) {
-                            if asset_exists(&rel) {
-                                sprite.image = asset_server.load(&rel);
-                            }
-                        }
-                    }
-                }
-            }
-            None => {
-                if is_prop {
-                    *vis = Visibility::Hidden;
-                }
-            }
-        }
+        pose_part(
+            data,
+            anim,
+            local,
+            state.character,
+            &asset_server,
+            &mut xf,
+            &mut sprite,
+            &mut vis,
+            &mut part,
+        );
     }
 }
