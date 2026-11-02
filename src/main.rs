@@ -1,5 +1,6 @@
 mod character;
 mod components;
+mod game;
 mod menu;
 mod peashooter;
 mod reanim;
