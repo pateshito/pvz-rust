@@ -454,10 +454,8 @@ fn load_cached(
         .find(|r| r.name == reanim)
         .ok_or_else(|| format!("❌ {entity} no tiene el reanim '{reanim}'"))?;
     let mut data = parse_reanim(&entry.path)?;
-    if entity == "PeaShooter" && reanim == "PeaShooter" {
-        if let Err(e) = crate::peashooter::build_states(&mut data) {
-            eprintln!("{e}");
-        }
+    if let Err(e) = crate::plant_anim::apply(entity, reanim, &mut data) {
+        eprintln!("{e}");
     }
     cache.map.insert(key, data.clone());
     Ok(data)

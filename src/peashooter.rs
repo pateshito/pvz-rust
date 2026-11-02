@@ -19,7 +19,7 @@
 //!
 //! Como el tallo avanza igual en ambos estados, el cambio entre ellos no da saltos.
 
-use crate::reanim::{AnimState, PartGroup, ReanimData, Track};
+use crate::reanim::{PartGroup, ReanimData, Track};
 
 pub const STATE_IDLE: &str = "idle";
 pub const STATE_SHOOTING: &str = "shooting";
@@ -27,85 +27,7 @@ pub const STATE_SHOOTING: &str = "shooting";
 /// Reemplaza los estados de `data` por `idle` y `shooting`, y marca qué tracks
 /// son de la cabeza. Devuelve un error si el `.reanim` no tiene la estructura esperada.
 pub fn build_states(data: &mut ReanimData) -> Result<(), String> {
-    let range = |name: &str| -> Result<(usize, usize), String> {
-        data.animations
-            .iter()
-            .find(|a| a.name == name)
-            .map(|a| (a.start, a.end))
-            .ok_or_else(|| format!("❌ PeaShooter: falta la animación '{}'", name))
-    };
-
-    let (stalk_start, stalk_end) = range("anim_idle")?;
-    let (head_idle_start, _) = range("anim_head_idle")?;
-    let (shoot_start, shoot_end) = range("anim_shooting")?;
-    let (full_start, full_end) = range("anim_full_idle")?;
-
-    let len = full_end - full_start + 1;
-    if stalk_end - stalk_start + 1 != len || shoot_end - shoot_start + 1 != len {
-        return Err(format!(
-            "❌ PeaShooter: anim_idle, anim_shooting y anim_full_idle deben durar lo mismo ({} frames esperados)",
-            len
-        ));
-    }
-
-    // Balanceo horizontal del tallo respecto a su primer frame.
-    let stem = data
-        .tracks
-        .iter()
-        .find(|t| t.name == "anim_stem")
-        .ok_or("❌ PeaShooter: falta el track 'anim_stem'")?;
-    let stem_x = |frame: usize| -> f32 {
-        stem.frames
-            .get(frame)
-            .and_then(|r| r.as_ref())
-            .map_or(0.0, |r| r.x)
-    };
-    let base_x = stem_x(stalk_start);
-    let head_dx: Vec<f32> = (0..len).map(|k| stem_x(stalk_start + k) - base_x).collect();
-
-    // Una pieza es de la cabeza si aparece en algún frame de los bloques de la cabeza
-    // (reposo o disparo; ej. el parpadeo de disparar solo existe en `anim_shooting`)
-    // y en ningún frame del bloque del tallo.
-    let active_in = |t: &Track, from: usize, to: usize| {
-        (from..=to).any(|f| {
-            t.frames
-                .get(f)
-                .and_then(|r| r.as_ref())
-                .map_or(false, |r| r.active)
-        })
-    };
-    for track in &mut data.tracks {
-        track.group = if active_in(track, head_idle_start, shoot_end)
-            && !active_in(track, stalk_start, stalk_end)
-        {
-            PartGroup::Head
-        } else {
-            PartGroup::Body
-        };
-    }
-
-    data.states = vec![
-        AnimState {
-            name: STATE_IDLE.into(),
-            len,
-            body_start: full_start,
-            head_start: full_start,
-            head_dx: Vec::new(),
-        },
-        AnimState {
-            name: STATE_SHOOTING.into(),
-            len,
-            body_start: stalk_start,
-            head_start: shoot_start,
-            head_dx,
-        },
-    ];
-
-    println!(
-        "🌱 PeaShooter: estados '{}' y '{}' ({} frames)",
-        STATE_IDLE, STATE_SHOOTING, len
-    );
-    Ok(())
+    crate::plant_anim::compose_standard(data, "PeaShooter", &["anim_stem"])
 }
 
 /// Índice de un estado por nombre; pensado para que la partida cambie entre

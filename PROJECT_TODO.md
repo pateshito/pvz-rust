@@ -127,7 +127,8 @@ assets/
 |---|---|---|
 | `main.rs` | Arranque, catálogo, estados Menu/Play/TestMode | Funciona. Sigue precargando Zombie y PeaShooter para la partida |
 | `reanim.rs` | Parser XML con regex; `Track`, `Resolved`, `AnimRange`, `AnimState`; detección de rangos `anim_*` | Funcional, sin validación estricta |
-| `peashooter.rs` | Une bloques del `.reanim` en 2 estados (`idle`, `shooting`) y separa cuerpo/cabeza | Funcional, específico |
+| `peashooter.rs` | Punto de entrada del lanzaguisantes: delega en `plant_anim` | Funcional |
+| `plant_anim.rs` | Une cuerpo y cabezas en estados de planta completa | PeaShooter, SnowPea, GatlingPea, SplitPea, ThreePeater |
 | `utils.rs` | `assets_dir()`, `asset_exists()`, `entity_name()`, `image_to_path()` | Resolución genérica; sin tablas por personaje |
 | `assets/catalog.rs` | Escanea `animations/` y asocia cada entidad con `textures/` | 74 entidades / 146 reanims |
 | `assets/paths.rs` | Índice de texturas e imágenes; resuelve `IMAGE_REANIM_*` | 3013/3013 referencias resueltas |
@@ -149,7 +150,8 @@ assets/
 - Descubrir las **74 entidades** y sus **146 reanims** sin hardcodear.
 - Elegir cualquiera de esas entidades en el modo Test y reproducir sus `.reanim` (los que no tienen marcadores `anim_*` se recorren enteros).
 - Resolver **cualquier** `IMAGE_REANIM_*` (3013/3013) con índice en memoria.
-- Reproducir una animación a `fps`, con cuerpo/cabeza en rangos distintos.
+- Reproducir una animación a `fps`, con cuerpo y varias cabezas en rangos distintos.
+- Unir en estados de planta completa los `.reanim` partidos: PeaShooter y SnowPea (`idle`, `shooting`), GatlingPea (el disparo de 39 repite el tallo de 25), SplitPea (`idle`, `shooting`, `back_shooting`) y ThreePeater (`idle` y `shooting` con las tres cabezas).
 - Ver el zombi normal por estilos (cuerpo, cono, cubo, puerta, bandera, flotador) sin mezclar accesorios.
 - Cambiar imagen por frame (parpadeos).
 - Ocultar tracks inactivos.
@@ -363,9 +365,9 @@ Objetivo de diseño:
 - [ ] **P1** Validar estructura y devolver errores con archivo/línea/track.
 - [ ] **P1** Soportar `<fps>`, `<track>`, `<name>`, `<t>`, `x/y/kx/sx/sy/f/i` completos.
 - [ ] **P1** Soportar imágenes por frame y cambios de imagen (parpadeos) en todos los tracks.
-- [ ] **P1** Soportar `AnimState` combinando rangos cuerpo/cabeza de forma genérica (no solo PeaShooter).
+- [x] **P1** Soportar `AnimState` combinando rangos cuerpo/cabeza de forma genérica (no solo PeaShooter). PeaShooter y SnowPea: `idle` + `shooting`. GatlingPea: igual, y el disparo repite el tallo. SplitPea: `idle`, `shooting` y `back_shooting`. ThreePeater: `idle` y `shooting` con las tres cabezas.
 - [ ] **P1** Soportar eventos/loops y animaciones que no son `anim_*`. El visor ya reproduce esos archivos como un estado `full`; faltan eventos y loops con nombre.
-- [ ] **P2** Tests unitarios con `.reanim` reales de varias plantas y zombies.
+- [x] **P2** Tests unitarios con `.reanim` reales de varias plantas y zombies. Cubren Sun, PeaShooter, SnowPea, GatlingPea, SplitPea, ThreePeater, Wallnut y el zombi básico.
 
 **Criterio de aceptación:** el visor reproduce cualquier `.reanim` del catálogo sin código específico.
 
@@ -405,7 +407,7 @@ Objetivo de diseño:
   - Área: FumeShroom, GloomShroom, Melonpult, WinterMelon, Cabbagepult, Cornpult, CobCannon.
   - Control: IceShroom, HypnoShroom, Squash, Tanglekelp, MagnetShroom.
   - Especiales: LilyPad, Flower Pot, CoffeeBean, UmbrellaLeaf, Blover, Plantern, Gravebuster, Marigold, GoldMagnet, Cattail, Spikerock, Torchwood, Imitater, Cactus, SeaShroom, ScaredyShroom, PuffShroom.
-- [ ] **P1** Animaciones por estado: idle, shoot, eat, die, etc.
+- [ ] **P1** Animaciones por estado: idle, shoot, eat, die, etc. El visor ya une esos estados en PeaShooter, SnowPea, GatlingPea, SplitPea y ThreePeater. La partida sigue animando solo al lanzaguisantes.
 - [ ] **P1** Coste/recarga y seed packets.
 - [ ] **P2** Almanac con datos y arte.
 
@@ -467,7 +469,7 @@ Orden concreto para no bloquearse:
 
 1. **Catálogo + resolución genérica** (Fase 1). ✅ Hecho: desbloquea todo lo demás.
 2. **Visor de cualquier entidad** (Fase 3). ✅ Hecho el P1. Quedan captura de frames y el modo comparar (P2).
-3. **Parser robusto + tests** (Fase 2). Evita deuda al crecer. Los `.reanim` sin `anim_*` ya se reproducen enteros.
+3. **Parser robusto + tests** (Fase 2). Hechos el `AnimState` genérico y los tests con `.reanim` reales. Siguen abiertos el reparto del parser en varios archivos y la validación con número de línea.
 4. **Tablero mínimo + PeaShooter vs zombie base** (Fases 4–7). ✅ Se juega el nivel de prueba. Faltan la pala, la carretilla y el resto de plantas y zombies.
 5. **Resto de plantas/zombies data-driven** (Fases 5–6).
 6. **UI/audio/progresión** (Fase 8).

@@ -2,7 +2,7 @@
 //! personaje a partir de su `.reanim` y colocarlas según el frame actual.
 
 use crate::components::CharacterPart;
-use crate::reanim::{AnimState, PartGroup, ReanimData};
+use crate::reanim::{AnimState, ReanimData};
 use crate::resources::CharacterLibraries;
 use crate::utils::{asset_exists, entity_name, image_to_path};
 use crate::zombie_style::PlainStyle;
@@ -225,18 +225,7 @@ pub fn pose_part(
         }
     }
     let is_prop = track.name.starts_with("anim_");
-    let is_head = track.group == PartGroup::Head;
-    let frame = local
-        + if is_head {
-            anim.head_start
-        } else {
-            anim.body_start
-        };
-    let dx = if is_head {
-        anim.head_dx.get(local).copied().unwrap_or(0.0)
-    } else {
-        0.0
-    };
+    let (frame, dx) = anim.sample(track.group, local);
 
     match track.frames.get(frame).and_then(|r| r.as_ref()) {
         Some(r) => {

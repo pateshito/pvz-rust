@@ -13,13 +13,18 @@ pub struct Resolved {
     pub active: bool,
 }
 
-/// A qué parte del personaje pertenece un track. Un estado puede reproducir
-/// el cuerpo y la cabeza desde rangos de frames distintos (ver `AnimState`).
+/// A qué parte del personaje pertenece un track. Un estado puede leer cada
+/// parte desde un rango de frames distinto (ver `AnimState`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
 pub enum PartGroup {
     #[default]
     Body,
+    /// Cabeza principal (la de delante en el bisojo, la primera del triple).
     Head,
+    /// Segunda cabeza: la de atrás del bisojo, o la del medio del triple.
+    Head2,
+    /// Tercera cabeza del triple.
+    Head3,
 }
 
 #[derive(Clone, Debug)]
@@ -38,9 +43,20 @@ pub struct AnimRange {
     pub end: usize,
 }
 
-/// Un estado que se puede reproducir (lo que el visor y, más adelante, la
-/// partida seleccionan). Puede ser un rango del `.reanim` tal cual, o una
-/// combinación de rangos: el cuerpo y la cabeza leen frames de sitios distintos.
+/// Origen de frames de una cabeza extra (`Head2`, `Head3`).
+#[derive(Clone, Debug)]
+pub struct GroupSample {
+    pub group: PartGroup,
+    pub start: usize,
+    /// Si está puesto y es menor que el largo del estado, esta parte se repite.
+    pub cycle: Option<usize>,
+    /// Balanceo horizontal por frame del cuerpo. Vacío = sin desplazamiento.
+    pub dx: Vec<f32>,
+}
+
+/// Un estado que se puede reproducir (lo que el visor y la partida seleccionan).
+/// Puede ser un rango del `.reanim` tal cual, o una combinación: el cuerpo y
+/// cada cabeza leen frames de sitios distintos.
 #[derive(Clone, Debug)]
 pub struct AnimState {
     pub name: String,
@@ -48,11 +64,64 @@ pub struct AnimState {
     pub len: usize,
     /// Primer frame de origen para los tracks del cuerpo.
     pub body_start: usize,
-    /// Primer frame de origen para los tracks de la cabeza.
+    /// Si está puesto, el cuerpo se repite cada tantos frames (el disparo de la
+    /// ametralladora dura más que el balanceo del tallo).
+    pub body_cycle: Option<usize>,
+    /// Primer frame de origen para la cabeza principal.
     pub head_start: usize,
-    /// Desplazamiento horizontal extra de la cabeza por frame (para que siga
-    /// el balanceo del tallo). Vacío = sin desplazamiento.
+    /// Igual que `body_cycle`, para la cabeza principal.
+    pub head_cycle: Option<usize>,
+    /// Desplazamiento horizontal extra de la cabeza principal, indexado por el
+    /// frame del cuerpo. Vacío = sin desplazamiento.
     pub head_dx: Vec<f32>,
+    /// Cabezas que no son la principal.
+    pub groups: Vec<GroupSample>,
+}
+
+impl AnimState {
+    /// Cuerpo y cabeza leen el mismo rango. Es el estado de un `.reanim` sin combinar.
+    pub fn same(name: impl Into<String>, start: usize, len: usize) -> Self {
+        Self {
+            name: name.into(),
+            len,
+            body_start: start,
+            head_start: start,
+            head_dx: Vec::new(),
+            body_cycle: None,
+            head_cycle: None,
+            groups: Vec::new(),
+        }
+    }
+
+    /// Frame de origen y desplazamiento horizontal de `group` en el frame `local`
+    /// del bucle (0..len).
+    pub fn sample(&self, group: PartGroup, local: usize) -> (usize, f32) {
+        let body_step = step_of(local, self.body_cycle);
+        match group {
+            PartGroup::Body => (self.body_start + body_step, 0.0),
+            PartGroup::Head => {
+                let step = step_of(local, self.head_cycle);
+                let dx = self.head_dx.get(body_step).copied().unwrap_or(0.0);
+                (self.head_start + step, dx)
+            }
+            other => {
+                if let Some(group) = self.groups.iter().find(|group| group.group == other) {
+                    let step = step_of(local, group.cycle);
+                    let dx = group.dx.get(body_step).copied().unwrap_or(0.0);
+                    (group.start + step, dx)
+                } else {
+                    (self.body_start + body_step, 0.0)
+                }
+            }
+        }
+    }
+}
+
+fn step_of(local: usize, cycle: Option<usize>) -> usize {
+    match cycle {
+        Some(n) if n > 0 => local % n,
+        _ => local,
+    }
 }
 
 #[derive(Clone)]
@@ -210,8 +279,8 @@ pub fn parse_reanim(path: &Path) -> Result<ReanimData, String> {
     }
 
     // Por defecto, un estado por cada rango marcado en el `.reanim`, con cuerpo y
-    // cabeza leyendo del mismo sitio. Personajes con reglas propias (PeaShooter)
-    // reemplazan esta lista después de cargar.
+    // cabeza leyendo del mismo sitio. `plant_anim` sustituye esa lista en las
+    // plantas cuyo archivo parte el cuerpo y las cabezas.
     //
     // Soles, proyectiles y varios props no traen tracks `anim_*`. Sin un estado
     // el visor no tendría nada que reproducir, así que se recorre el archivo entero.
@@ -220,24 +289,12 @@ pub fn parse_reanim(path: &Path) -> Result<ReanimData, String> {
         if len == 0 {
             Vec::new()
         } else {
-            vec![AnimState {
-                name: "full".into(),
-                len,
-                body_start: 0,
-                head_start: 0,
-                head_dx: Vec::new(),
-            }]
+            vec![AnimState::same("full", 0, len)]
         }
     } else {
         animations
             .iter()
-            .map(|a| AnimState {
-                name: a.name.clone(),
-                len: a.end.saturating_sub(a.start) + 1,
-                body_start: a.start,
-                head_start: a.start,
-                head_dx: Vec::new(),
-            })
+            .map(|a| AnimState::same(a.name.clone(), a.start, a.end.saturating_sub(a.start) + 1))
             .collect()
     };
 

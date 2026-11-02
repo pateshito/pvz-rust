@@ -4,6 +4,7 @@ mod components;
 mod game;
 mod menu;
 mod peashooter;
+mod plant_anim;
 mod reanim;
 mod resources;
 mod systems;
