@@ -16,7 +16,7 @@
 | Organización | `textures/<Personaje>/`, `animations/<Personaje>/` | mismo criterio, extendido a **74 entidades** y 6 categorías más |
 | Tamaño | ~1,4 MB | **~72 MB** |
 | Verificación | manual | script reproducible + hash SHA-256 por archivo |
-| Código | visor de 2 personajes | catálogo de 74 entidades + visor de cualquiera + lógica de partida pura (35 tests OK) |
+| Código | visor de 2 personajes | catálogo, visor de cualquiera y nivel de prueba jugable (36 tests OK) |
 | Documentación | ninguna | este archivo |
 
 **Lo que ya está hecho**
@@ -28,7 +28,7 @@
 - [x] Manifiesto `assets/ASSET_MANIFEST.tsv` con origen → destino, tamaño y SHA-256.
 - [x] Validador de referencias `.reanim` → texturas: `tools/validate_assets.py` (3013/3013).
 - [x] Catálogo de assets (`src/assets/catalog.rs`) y resolución genérica de imágenes (`src/assets/paths.rs`).
-- [x] `cargo test`: 35/35 tests pasan con el árbol nuevo.
+- [x] `cargo test`: 36/36 tests pasan con el árbol nuevo.
 
 **Lo que falta para “completar el proyecto”**
 
@@ -55,7 +55,7 @@ PVZ-qwen/
 │   ├── peashooter.rs          Reglas especiales de estados del PeaShooter
 │   ├── utils.rs               Rutas de assets, nombre de entidad, hud
 │   ├── character.rs           Piezas/poses compartidas por visor y partida
-│   ├── game/                  Lógica pura: board, defs, level, sim (sin Bevy)
+│   ├── game/                  board, defs, level, sim y view (la partida en pantalla)
 │   └── assets/
 │       ├── catalog.rs         Escaneo de animations/ → EntityCatalog
 │       └── paths.rs           Índice de texturas + resolución IMAGE_REANIM_*
@@ -137,7 +137,8 @@ assets/
 | `game/defs.rs` | Definiciones de plantas/zombies | PeaShooter y zombie básico |
 | `game/level.rs` | Nivel de prueba, oleadas y soles | Lógica pura + tests |
 | `game/sim.rs` | Simulación: plantar, disparar, comer, ganar/perder | Lógica pura + tests |
-| `menu.rs` | Menú Jugar / Test. Jugar avisa de que el tablero aún no se dibuja | Funcional |
+| `game/view.rs` | Dibuja la partida de prueba sobre el césped de día | Lanzaguisantes, zombi básico, guisantes y soles |
+| `menu.rs` | Menú Jugar / Test | Funcional |
 | `systems.rs` | Mueve el personaje en X | Placeholder |
 | `resources.rs` | Recursos globales del visor | Funcional |
 
@@ -152,13 +153,14 @@ assets/
 - Ver el zombi normal por estilos (cuerpo, cono, cubo, puerta, bandera, flotador) sin mezclar accesorios.
 - Cambiar imagen por frame (parpadeos).
 - Ocultar tracks inactivos.
-- Menú → visor → volver, pausa, reinicio, movimiento.
+- Menú → visor o partida → volver, pausa, reinicio, movimiento.
 - Simular una partida completa sin Bevy: plantar, enfriamientos, soles, guisantes, daño, muerte, oleadas y victoria/derrota.
+- Jugar esa partida en el césped de día: clic para plantar, recoger soles, ver al zombi caminar, comer y morir.
 
 **Lo que el código no sabe hacer todavía**
 
 - Reproducir animaciones con `image` distinta por frame de forma completa (solo cambia si el track tiene imagen).
-- Tablero, celdas, plantas, zombies, proyectiles, soles, colisiones, oleadas.
+- Pala, carretilla y el resto de plantas y zombies. La partida de prueba (lanzaguisantes contra el zombi básico) ya se dibuja.
 - UI de juego (seed packets, almanac, tienda), audio, progresión, guardado.
 - Empaquetado/distribución.
 
@@ -208,7 +210,7 @@ Detalles verificados:
 | Sonidos/música | ✅ 171 | ❌ sin audio |
 | Partículas | ✅ 194 | ❌ sin partículas |
 | Datos/fuentes | ✅ 42 | ❌ sin uso |
-| Tablero y gameplay | — | ❌ no existe |
+| Tablero y gameplay | — | ⚠️ nivel de prueba en pantalla (un tipo de planta y un zombi) |
 | Progresión/guardado | — | ❌ no existe |
 
 ### 1.6 Deuda técnica y estado de Git
@@ -381,12 +383,12 @@ Objetivo de diseño:
 
 ### Fase 4 — Tablero y reglas base (P1)
 
-- [ ] **P0** Definir el tablero: 5 carriles × 9 columnas, coordenadas y escala.
-- [ ] **P0** Fondo, césped, casa, carretilla y límites.
-- [ ] **P1** Colocación de plantas con rejilla y snapping.
+- [x] **P0** Definir el tablero: 5 carriles × 9 columnas, coordenadas y escala. Se dibuja en `Jugar`.
+- [ ] **P0** Fondo, césped, casa, carretilla y límites. Hechos el fondo de día (`background1.jpg`, incluye casa y césped) y el límite de la casa. Falta la carretilla: la simulación aún no la tiene.
+- [x] **P1** Colocación de plantas con rejilla y snapping.
 - [ ] **P1** Shovel/recogida.
-- [ ] **P1** Estado de nivel: soles, progreso, oleada, victoria/derrota.
-- [ ] **P1** Pausa y reinicio.
+- [x] **P1** Estado de nivel: soles, progreso, oleada, victoria/derrota.
+- [x] **P1** Pausa y reinicio.
 - [ ] **P2** Soportar varios tipos de terreno (día, noche, piscina, tejado).
 
 **Criterio de aceptación:** se puede plantar y ver una oleada básica en un tablero.
@@ -394,7 +396,7 @@ Objetivo de diseño:
 ### Fase 5 — Plantas data-driven (P1)
 
 - [ ] **P0** Definir `PlantDef`: id, nombre, coste, vida, recarga, animación, proyectil, comportamiento.
-- [ ] **P0** Implementar las plantas base: PeaShooter, SunFlower, Wallnut, PotatoMine, CherryBomb, SnowPea, Chomper.
+- [ ] **P0** Implementar las plantas base: PeaShooter, SunFlower, Wallnut, PotatoMine, CherryBomb, SnowPea, Chomper. El lanzaguisantes ya se planta y dispara en la partida de prueba.
 - [ ] **P1** Implementar el resto por familias:
   - Tirador: PeaShooter, SnowPea, Repeater/Gatling, SplitPea, Threepeater.
   - Productor: SunFlower, SunShroom, TwinSunflower.
@@ -411,8 +413,8 @@ Objetivo de diseño:
 
 ### Fase 6 — Zombies y oleadas (P1)
 
-- [ ] **P0** Definir `ZombieDef`: id, vida, velocidad, daño, animación, comportamiento.
-- [ ] **P0** Implementar zombie base: caminar, comer, morir.
+- [x] **P0** Definir `ZombieDef`: id, vida, velocidad, daño, animación, comportamiento. Hoy solo el zombi básico.
+- [x] **P0** Implementar zombie base: caminar, comer, morir. Se ve en la partida de prueba.
 - [ ] **P1** Variantes: cono, cubo, bandera, carrerilla, bailarín, futbolista, pogo, pole vault, digger, ladder, paper, balloon, snorkel, dolphin, bobsled, catapult, gargantuar, imp, jefe, yeti, zamboni, disco, jackbox, dancer, charred.
 - [ ] **P1** Oleadas: composición, tiempos, flag wave, final wave.
 - [ ] **P1** Spawn por carril y progresión de dificultad.
@@ -423,10 +425,10 @@ Objetivo de diseño:
 
 ### Fase 7 — Combate, proyectiles y soles (P1)
 
-- [ ] **P0** Proyectiles: pea, snow pea, spike, star, melon, cabbage, kernel, cob.
-- [ ] **P0** Colisiones proyectil↔zombie y planta↔zombie.
-- [ ] **P0** Daño, vida, muerte y feedback visual.
-- [ ] **P1** Soles: caída, recogida, contador y gasto.
+- [ ] **P0** Proyectiles: pea, snow pea, spike, star, melon, cabbage, kernel, cob. El guisante ya vuela y golpea.
+- [x] **P0** Colisiones proyectil↔zombie y planta↔zombie.
+- [x] **P0** Daño, vida, muerte y feedback visual. La muerte usa `anim_death`; todavía no hay sangre ni partículas.
+- [x] **P1** Soles: caída, recogida, contador y gasto.
 - [ ] **P1** Efectos: explosiones, hielo, fuego, veneno, ralentización.
 - [ ] **P1** Partículas (`assets/particles/`) y sonidos de impacto.
 - [ ] **P2** Balance de daños/costes.
@@ -466,7 +468,7 @@ Orden concreto para no bloquearse:
 1. **Catálogo + resolución genérica** (Fase 1). ✅ Hecho: desbloquea todo lo demás.
 2. **Visor de cualquier entidad** (Fase 3). ✅ Hecho el P1. Quedan captura de frames y el modo comparar (P2).
 3. **Parser robusto + tests** (Fase 2). Evita deuda al crecer. Los `.reanim` sin `anim_*` ya se reproducen enteros.
-4. **Tablero mínimo + PeaShooter vs zombie base** (Fases 4–7). Primer gameplay real.
+4. **Tablero mínimo + PeaShooter vs zombie base** (Fases 4–7). ✅ Se juega el nivel de prueba. Faltan la pala, la carretilla y el resto de plantas y zombies.
 5. **Resto de plantas/zombies data-driven** (Fases 5–6).
 6. **UI/audio/progresión** (Fase 8).
 7. **Empaquetado y CI** (Fase 9).
@@ -525,7 +527,7 @@ cargo run
 | Resueltas (images/) | 85 |
 | Sin resolver | 0 |
 | Entidades / reanims en el catálogo | 74 / 146 |
-| `cargo test` | 35/35 OK |
+| `cargo test` | 36/36 OK |
 | `validate_assets.py --strict` | OK (0 sin resolver) |
 | Tamaño de `assets/` | ~72 MB |
 

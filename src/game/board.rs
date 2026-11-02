@@ -27,6 +27,12 @@ pub fn cell_top(row: usize) -> f32 {
     LAWN_TOP + CELL_H * row as f32
 }
 
+/// Coordenadas de pantalla (origen arriba a la izquierda, y hacia abajo) al mundo
+/// de una cámara 2D de Bevy centrada en una ventana de 800×600 (y hacia arriba).
+pub fn screen_to_world(x: f32, y: f32) -> (f32, f32) {
+    (x - SCREEN_W * 0.5, SCREEN_H * 0.5 - y)
+}
+
 /// Celda `(fila, columna)` bajo un punto de pantalla, si está dentro del césped.
 pub fn cell_at(x: f32, y: f32) -> Option<(usize, usize)> {
     let fx = (x - LAWN_LEFT) / CELL_W;
@@ -62,5 +68,12 @@ mod tests {
         assert_eq!(cell_left(0), 40.0);
         assert_eq!(cell_left(8) + CELL_W, 760.0);
         assert_eq!(cell_top(4) + CELL_H, 580.0);
+    }
+
+    #[test]
+    fn el_centro_de_la_pantalla_es_el_origen_del_mundo() {
+        assert_eq!(screen_to_world(400.0, 300.0), (0.0, 0.0));
+        assert_eq!(screen_to_world(0.0, 0.0), (-400.0, 300.0));
+        assert_eq!(screen_to_world(800.0, 600.0), (400.0, -300.0));
     }
 }

@@ -1,0 +1,823 @@
+//! Dibuja la simulación: césped, lanzaguisantes, zombi básico, guisantes y soles.
+//!
+//! La lógica vive en `sim`. Aquí solo se lee el estado, se mandan órdenes y se
+//! crean o se quitan los sprites. Las coordenadas de pantalla están en `board`.
+
+use std::collections::HashMap;
+use std::time::{SystemTime, UNIX_EPOCH};
+
+use bevy::prelude::*;
+use bevy::window::PrimaryWindow;
+
+use crate::character::{pose_part, spawn_parts};
+use crate::components::CharacterPart;
+use crate::game::board::{
+    cell_at, cell_left, cell_top, screen_to_world, CELL_H, CELL_W, SCREEN_H, SCREEN_W,
+};
+use crate::game::defs::{plant_def, zombie_def, PlantKind};
+use crate::game::level::Level;
+use crate::game::sim::{
+    Id, Outcome, PlantError, SeedStatus, Sim, SimEvent, ZombieStatus, PEA_WIDTH, PEA_Y_OFFSET,
+};
+use crate::peashooter::{state_index, STATE_IDLE, STATE_SHOOTING};
+use crate::reanim::ReanimData;
+use crate::resources::CharacterLibraries;
+use crate::zombie_style::PlainStyle;
+use crate::AppState;
+
+/// El `.reanim` del lanzaguisantes ocupa unos 6..62 en x y 10..63 en y (y hacia
+/// abajo). Con esto el cuerpo queda dentro de la celda y las hojas, abajo.
+const PLANT_DX: f32 = 10.0;
+const PLANT_DY: f32 = 26.0;
+/// Los pies de `anim_walk` están cerca de y = 115. Así quedan justo sobre el
+/// borde inferior del carril.
+const ZOMBIE_DY: f32 = -21.0;
+
+#[derive(Component)]
+struct PlayPiece;
+
+#[derive(Component)]
+struct PlantActor(Id);
+
+#[derive(Component)]
+struct ZombieActor(Id);
+
+#[derive(Component)]
+struct PeaActor(Id);
+
+#[derive(Component)]
+struct SunActor(Id);
+
+#[derive(Component)]
+struct HoverCell;
+
+#[derive(Component)]
+struct StatusText;
+
+#[derive(Component)]
+struct SeedCard;
+
+#[derive(Component)]
+struct SeedLabel;
+
+#[derive(Component)]
+struct Banner;
+
+#[derive(Resource)]
+struct Match(Sim);
+
+#[derive(Resource)]
+struct PlayControl {
+    paused: bool,
+    restart: bool,
+    /// Tiempo de animación. Se detiene con la pausa y al terminar la partida.
+    clock: f32,
+    banner: bool,
+    notice: String,
+    notice_until: f32,
+}
+
+#[derive(Resource, Default)]
+struct Actors {
+    plants: HashMap<Id, Entity>,
+    zombies: HashMap<Id, Entity>,
+    peas: HashMap<Id, Entity>,
+    suns: HashMap<Id, Entity>,
+}
+
+impl Actors {
+    fn despawn_all(&mut self, commands: &mut Commands) {
+        for (_, entity) in self
+            .plants
+            .drain()
+            .chain(self.zombies.drain())
+            .chain(self.peas.drain())
+            .chain(self.suns.drain())
+        {
+            commands.entity(entity).despawn_recursive();
+        }
+    }
+
+    fn remove(&mut self, commands: &mut Commands, id: Id) {
+        for map in [
+            &mut self.plants,
+            &mut self.zombies,
+            &mut self.peas,
+            &mut self.suns,
+        ] {
+            if let Some(entity) = map.remove(&id) {
+                commands.entity(entity).despawn_recursive();
+            }
+        }
+    }
+}
+
+pub fn register(app: &mut App) {
+    app.add_systems(OnEnter(AppState::Play), setup)
+        .add_systems(OnExit(AppState::Play), cleanup)
+        .add_systems(
+            Update,
+            (input, simulate, apply_deferred, animate)
+                .chain()
+                .run_if(in_state(AppState::Play)),
+        );
+}
+
+fn setup(mut commands: Commands, asset_server: Res<AssetServer>) {
+    commands.spawn((Camera2d, PlayPiece));
+
+    // `background1.jpg` mide 1400×600. La ventana de 800×600 se ve desde x = 220,
+    // así que el centro de la foto queda en la x de pantalla 480.
+    let (bx, by) = screen_to_world(480.0, 300.0);
+    commands.spawn((
+        Sprite {
+            image: asset_server.load("images/background1.jpg"),
+            ..default()
+        },
+        Transform::from_xyz(bx, by, -1.0),
+        PlayPiece,
+    ));
+
+    commands.spawn((
+        Sprite::from_color(
+            Color::srgba(0.5, 1.0, 0.4, 0.0),
+            Vec2::new(CELL_W - 6.0, CELL_H - 8.0),
+        ),
+        Transform::from_xyz(0.0, 0.0, -0.5),
+        Visibility::Hidden,
+        HoverCell,
+        PlayPiece,
+    ));
+
+    commands
+        .spawn((
+            Node {
+                position_type: PositionType::Absolute,
+                left: Val::Px(0.0),
+                top: Val::Px(0.0),
+                width: Val::Percent(100.0),
+                height: Val::Px(72.0),
+                padding: UiRect::all(Val::Px(8.0)),
+                column_gap: Val::Px(8.0),
+                align_items: AlignItems::Center,
+                ..default()
+            },
+            BackgroundColor(Color::srgba(0.05, 0.07, 0.04, 0.72)),
+            PlayPiece,
+        ))
+        .with_children(|parent| {
+            parent.spawn((
+                Text::new(""),
+                TextFont::from_font_size(16.0),
+                TextColor(Color::srgb(0.95, 0.95, 0.85)),
+                Node {
+                    flex_grow: 1.0,
+                    ..default()
+                },
+                StatusText,
+            ));
+            parent
+                .spawn((
+                    Node {
+                        width: Val::Px(210.0),
+                        height: Val::Px(46.0),
+                        justify_content: JustifyContent::Center,
+                        align_items: AlignItems::Center,
+                        border: UiRect::all(Val::Px(2.0)),
+                        ..default()
+                    },
+                    BorderColor(Color::srgb(0.45, 0.35, 0.15)),
+                    BackgroundColor(Color::srgb(0.3, 0.5, 0.22)),
+                    SeedCard,
+                ))
+                .with_children(|button| {
+                    button.spawn((
+                        Text::new("Lanzaguisantes"),
+                        TextFont::from_font_size(16.0),
+                        TextColor(Color::srgb(0.12, 0.08, 0.04)),
+                        SeedLabel,
+                    ));
+                });
+        });
+
+    commands.insert_resource(Match(Sim::new(Level::test_level(), fresh_seed(0.0))));
+    commands.insert_resource(PlayControl {
+        paused: false,
+        restart: false,
+        clock: 0.0,
+        banner: false,
+        notice: String::new(),
+        notice_until: 0.0,
+    });
+    commands.insert_resource(Actors::default());
+}
+
+fn cleanup(mut commands: Commands, query: Query<Entity, With<PlayPiece>>) {
+    for entity in &query {
+        commands.entity(entity).despawn_recursive();
+    }
+    commands.remove_resource::<Match>();
+    commands.remove_resource::<PlayControl>();
+    commands.remove_resource::<Actors>();
+}
+
+fn input(
+    mut next_state: ResMut<NextState<AppState>>,
+    keys: Res<ButtonInput<KeyCode>>,
+    mouse: Res<ButtonInput<MouseButton>>,
+    windows: Query<&Window, With<PrimaryWindow>>,
+    mut sim: ResMut<Match>,
+    mut control: ResMut<PlayControl>,
+    time: Res<Time>,
+) {
+    if keys.just_pressed(KeyCode::Escape) {
+        next_state.set(AppState::Menu);
+        return;
+    }
+    if keys.just_pressed(KeyCode::KeyR) {
+        control.restart = true;
+        return;
+    }
+    if keys.just_pressed(KeyCode::KeyP) && sim.0.outcome == Outcome::Playing {
+        control.paused = !control.paused;
+    }
+    if !mouse.just_pressed(MouseButton::Left) {
+        return;
+    }
+    if control.paused || sim.0.outcome != Outcome::Playing {
+        return;
+    }
+    let Some(cursor) = cursor_on_board(windows.iter().next()) else {
+        return;
+    };
+
+    if let Some(id) = sim.0.sun_at(cursor.x, cursor.y) {
+        sim.0.collect_sun(id);
+        return;
+    }
+    let Some((row, col)) = cell_at(cursor.x, cursor.y) else {
+        return;
+    };
+    let Some(kind) = sim.0.seeds.first().map(|seed| seed.kind) else {
+        return;
+    };
+    if let Err(error) = sim.0.plant(kind, row, col) {
+        control.notice = match error {
+            PlantError::NotEnoughSun => "No hay soles suficientes".into(),
+            PlantError::OnCooldown => "El lanzaguisantes se está recargando".into(),
+            PlantError::CellOccupied => "Esa celda está ocupada".into(),
+            PlantError::OutOfBoard | PlantError::NoSuchSeed | PlantError::GameOver => String::new(),
+        };
+        control.notice_until = time.elapsed_secs() + 1.6;
+    }
+}
+
+fn simulate(
+    time: Res<Time>,
+    mut commands: Commands,
+    asset_server: Res<AssetServer>,
+    libraries: Res<CharacterLibraries>,
+    mut sim: ResMut<Match>,
+    mut control: ResMut<PlayControl>,
+    mut actors: ResMut<Actors>,
+    banners: Query<Entity, With<Banner>>,
+    mut hover: Query<(&mut Transform, &mut Sprite, &mut Visibility), With<HoverCell>>,
+    windows: Query<&Window, With<PrimaryWindow>>,
+    mut status: Query<&mut Text, With<StatusText>>,
+    mut seed_label: Query<&mut Text, (With<SeedLabel>, Without<StatusText>)>,
+    mut seed_color: Query<&mut BackgroundColor, With<SeedCard>>,
+) {
+    if control.restart {
+        actors.despawn_all(&mut commands);
+        for entity in &banners {
+            commands.entity(entity).despawn_recursive();
+        }
+        sim.0 = Sim::new(Level::test_level(), fresh_seed(sim.0.time));
+        *control = PlayControl {
+            paused: false,
+            restart: false,
+            clock: 0.0,
+            banner: false,
+            notice: String::new(),
+            notice_until: 0.0,
+        };
+    }
+
+    let playing = sim.0.outcome == Outcome::Playing && !control.paused;
+    if playing {
+        let dt = time.delta_secs();
+        control.clock += dt;
+        sim.0.step(dt);
+    }
+
+    for event in sim.0.take_events() {
+        apply_event(
+            &mut commands,
+            &asset_server,
+            &libraries,
+            &sim.0,
+            &mut actors,
+            event,
+        );
+    }
+
+    if sim.0.outcome != Outcome::Playing && !control.banner {
+        spawn_banner(&mut commands, sim.0.outcome);
+        control.banner = true;
+    }
+
+    place_hover(&sim.0, &control, windows.iter().next(), &mut hover);
+    paint_hud(
+        &sim.0,
+        &control,
+        time.elapsed_secs(),
+        &mut status,
+        &mut seed_label,
+        &mut seed_color,
+    );
+}
+
+fn animate(
+    sim: Res<Match>,
+    control: Res<PlayControl>,
+    libraries: Res<CharacterLibraries>,
+    asset_server: Res<AssetServer>,
+    mut plants: Query<
+        (&PlantActor, &Children, &mut Transform),
+        (Without<CharacterPart>, Without<ZombieActor>),
+    >,
+    mut zombies: Query<
+        (&ZombieActor, &Children, &mut Transform),
+        (Without<CharacterPart>, Without<PlantActor>),
+    >,
+    mut parts: Query<(
+        &mut Transform,
+        &mut Sprite,
+        &mut Visibility,
+        &mut CharacterPart,
+    )>,
+    mut peas: Query<
+        (&PeaActor, &mut Transform),
+        (
+            Without<CharacterPart>,
+            Without<PlantActor>,
+            Without<ZombieActor>,
+        ),
+    >,
+    mut suns: Query<
+        (&SunActor, &mut Transform),
+        (
+            Without<CharacterPart>,
+            Without<PlantActor>,
+            Without<ZombieActor>,
+            Without<PeaActor>,
+        ),
+    >,
+) {
+    let pea_data = &libraries.peashooter;
+    for (actor, children, mut root) in &mut plants {
+        let Some(plant) = sim.0.plants.iter().find(|plant| plant.id == actor.0) else {
+            continue;
+        };
+        let (x, y) = screen_to_world(
+            cell_left(plant.col) + PLANT_DX,
+            cell_top(plant.row) + PLANT_DY,
+        );
+        root.translation.x = x;
+        root.translation.y = y;
+        root.translation.z = plant.row as f32;
+        let (index, local) = plant_frame(pea_data, plant.shoot_phase, control.clock);
+        pose_children(
+            &mut parts,
+            children,
+            pea_data,
+            index,
+            local,
+            "PeaShooter",
+            None,
+            &asset_server,
+        );
+    }
+
+    let zombie_data = &libraries.zombie;
+    for (actor, children, mut root) in &mut zombies {
+        let Some(zombie) = sim.0.zombies.iter().find(|zombie| zombie.id == actor.0) else {
+            continue;
+        };
+        let (x, y) = screen_to_world(zombie.x, cell_top(zombie.row) + ZOMBIE_DY);
+        root.translation.x = x;
+        root.translation.y = y;
+        root.translation.z = zombie.row as f32 + 0.45;
+        let (index, local) = zombie_frame(zombie_data, zombie, control.clock);
+        pose_children(
+            &mut parts,
+            children,
+            zombie_data,
+            index,
+            local,
+            "Zombie",
+            Some(PlainStyle::Normal),
+            &asset_server,
+        );
+    }
+
+    for (actor, mut xf) in &mut peas {
+        if let Some(pea) = sim.0.peas.iter().find(|pea| pea.id == actor.0) {
+            let (x, y) = screen_to_world(pea.x + PEA_WIDTH * 0.5, cell_top(pea.row) + PEA_Y_OFFSET);
+            xf.translation.x = x;
+            xf.translation.y = y;
+        }
+    }
+    for (actor, mut xf) in &mut suns {
+        if let Some(sun) = sim.0.suns.iter().find(|sun| sun.id == actor.0) {
+            let (x, y) = screen_to_world(sun.x, sun.y);
+            xf.translation.x = x;
+            xf.translation.y = y;
+            xf.rotation = Quat::from_rotation_z(control.clock);
+        }
+    }
+}
+
+fn apply_event(
+    commands: &mut Commands,
+    asset_server: &AssetServer,
+    libraries: &CharacterLibraries,
+    sim: &Sim,
+    actors: &mut Actors,
+    event: SimEvent,
+) {
+    match event {
+        SimEvent::PlantPlaced(id) => {
+            if let Some(entity) = spawn_plant(commands, asset_server, libraries, sim, id) {
+                actors.plants.insert(id, entity);
+            }
+        }
+        SimEvent::ZombieSpawned(id) => {
+            if let Some(entity) = spawn_zombie(commands, asset_server, libraries, sim, id) {
+                actors.zombies.insert(id, entity);
+            }
+        }
+        SimEvent::PeaFired(id) => {
+            if let Some(pea) = sim.peas.iter().find(|pea| pea.id == id) {
+                let (x, y) =
+                    screen_to_world(pea.x + PEA_WIDTH * 0.5, cell_top(pea.row) + PEA_Y_OFFSET);
+                let entity = commands
+                    .spawn((
+                        Sprite {
+                            image: asset_server.load("images/ProjectilePea.png"),
+                            custom_size: Some(Vec2::new(PEA_WIDTH, PEA_WIDTH)),
+                            ..default()
+                        },
+                        Transform::from_xyz(x, y, pea.row as f32 + 0.7),
+                        PeaActor(id),
+                        PlayPiece,
+                    ))
+                    .id();
+                actors.peas.insert(id, entity);
+            }
+        }
+        SimEvent::SunSpawned(id) => {
+            if let Some(sun) = sim.suns.iter().find(|sun| sun.id == id) {
+                let (x, y) = screen_to_world(sun.x, sun.y);
+                let entity = commands
+                    .spawn((
+                        Sprite {
+                            image: asset_server.load("textures/Sun/Sun1.png"),
+                            custom_size: Some(Vec2::new(74.0, 74.0)),
+                            ..default()
+                        },
+                        Transform::from_xyz(x, y, 12.0),
+                        SunActor(id),
+                        PlayPiece,
+                    ))
+                    .id();
+                actors.suns.insert(id, entity);
+            }
+        }
+        SimEvent::PlantDied(id)
+        | SimEvent::ZombieRemoved(id)
+        | SimEvent::PeaRemoved { id, .. }
+        | SimEvent::SunCollected(id)
+        | SimEvent::SunExpired(id) => actors.remove(commands, id),
+        SimEvent::ZombieDied(_) | SimEvent::Won | SimEvent::Lost => {}
+    }
+}
+
+fn spawn_plant(
+    commands: &mut Commands,
+    asset_server: &AssetServer,
+    libraries: &CharacterLibraries,
+    sim: &Sim,
+    id: Id,
+) -> Option<Entity> {
+    let plant = sim.plants.iter().find(|plant| plant.id == id)?;
+    let (x, y) = screen_to_world(
+        cell_left(plant.col) + PLANT_DX,
+        cell_top(plant.row) + PLANT_DY,
+    );
+    let root = commands
+        .spawn((
+            Transform::from_xyz(x, y, plant.row as f32),
+            Visibility::default(),
+            PlantActor(id),
+            PlayPiece,
+        ))
+        .id();
+    spawn_parts(
+        commands,
+        asset_server,
+        &libraries.peashooter,
+        "PeaShooter",
+        root,
+        false,
+    );
+    Some(root)
+}
+
+fn spawn_zombie(
+    commands: &mut Commands,
+    asset_server: &AssetServer,
+    libraries: &CharacterLibraries,
+    sim: &Sim,
+    id: Id,
+) -> Option<Entity> {
+    let zombie = sim.zombies.iter().find(|zombie| zombie.id == id)?;
+    let (x, y) = screen_to_world(zombie.x, cell_top(zombie.row) + ZOMBIE_DY);
+    let root = commands
+        .spawn((
+            Transform::from_xyz(x, y, zombie.row as f32 + 0.45),
+            Visibility::default(),
+            ZombieActor(id),
+            PlayPiece,
+        ))
+        .id();
+    spawn_parts(
+        commands,
+        asset_server,
+        &libraries.zombie,
+        "Zombie",
+        root,
+        false,
+    );
+    Some(root)
+}
+
+fn pose_children(
+    parts: &mut Query<(
+        &mut Transform,
+        &mut Sprite,
+        &mut Visibility,
+        &mut CharacterPart,
+    )>,
+    children: &Children,
+    data: &ReanimData,
+    index: usize,
+    local: usize,
+    entity: &str,
+    style: Option<PlainStyle>,
+    asset_server: &AssetServer,
+) {
+    let Some(state) = data.states.get(index) else {
+        return;
+    };
+    let mut iter = parts.iter_many_mut(children);
+    while let Some((mut xf, mut sprite, mut vis, mut part)) = iter.fetch_next() {
+        if part.track >= data.tracks.len() {
+            *vis = Visibility::Hidden;
+            continue;
+        }
+        pose_part(
+            data,
+            state,
+            local,
+            entity,
+            style,
+            asset_server,
+            &mut xf,
+            &mut sprite,
+            &mut vis,
+            &mut part,
+        );
+    }
+}
+
+fn plant_frame(data: &ReanimData, shoot_phase: Option<f32>, clock: f32) -> (usize, usize) {
+    if let Some(phase) = shoot_phase {
+        let len = frame_len(data, STATE_SHOOTING) as f32;
+        frame_in(
+            data,
+            STATE_SHOOTING,
+            (phase.clamp(0.0, 0.999) * len) as usize,
+            false,
+        )
+    } else {
+        frame_in(data, STATE_IDLE, (clock * data.fps) as usize, true)
+    }
+}
+
+fn zombie_frame(
+    data: &ReanimData,
+    zombie: &crate::game::sim::Zombie,
+    clock: f32,
+) -> (usize, usize) {
+    match zombie.status {
+        ZombieStatus::Dying { elapsed } => {
+            let len = frame_len(data, "anim_death");
+            let def = zombie_def(zombie.kind);
+            let local = if def.death_time <= 0.0 {
+                len - 1
+            } else {
+                ((elapsed / def.death_time) * len as f32) as usize
+            };
+            frame_in(data, "anim_death", local, false)
+        }
+        ZombieStatus::Eating(_) => frame_in(
+            data,
+            "anim_eat",
+            (clock * data.fps * zombie.speed_mul) as usize,
+            true,
+        ),
+        ZombieStatus::Walking => frame_in(
+            data,
+            "anim_walk",
+            (clock * data.fps * zombie.speed_mul) as usize,
+            true,
+        ),
+    }
+}
+
+fn frame_in(data: &ReanimData, name: &str, local: usize, wrap: bool) -> (usize, usize) {
+    let index = state_index(data, name).unwrap_or(0);
+    let len = data
+        .states
+        .get(index)
+        .map(|state| state.len.max(1))
+        .unwrap_or(1);
+    let local = if wrap {
+        local % len
+    } else {
+        local.min(len - 1)
+    };
+    (index, local)
+}
+
+fn frame_len(data: &ReanimData, name: &str) -> usize {
+    let index = state_index(data, name).unwrap_or(0);
+    data.states
+        .get(index)
+        .map(|state| state.len.max(1))
+        .unwrap_or(1)
+}
+
+fn place_hover(
+    sim: &Sim,
+    control: &PlayControl,
+    window: Option<&Window>,
+    hover: &mut Query<(&mut Transform, &mut Sprite, &mut Visibility), With<HoverCell>>,
+) {
+    let Ok((mut xf, mut sprite, mut vis)) = hover.get_single_mut() else {
+        return;
+    };
+    let cell = (sim.outcome == Outcome::Playing && !control.paused)
+        .then(|| cursor_on_board(window))
+        .flatten()
+        .and_then(|cursor| cell_at(cursor.x, cursor.y));
+    let Some((row, col)) = cell else {
+        *vis = Visibility::Hidden;
+        return;
+    };
+    let (x, y) = screen_to_world(cell_left(col) + CELL_W * 0.5, cell_top(row) + CELL_H * 0.5);
+    xf.translation.x = x;
+    xf.translation.y = y;
+    let open = sim.plant_at(row, col).is_none() && sim.seed_status(0) == SeedStatus::Ready;
+    sprite.color = if open {
+        Color::srgba(0.45, 1.0, 0.4, 0.28)
+    } else {
+        Color::srgba(1.0, 0.35, 0.25, 0.28)
+    };
+    *vis = Visibility::Inherited;
+}
+
+fn paint_hud(
+    sim: &Sim,
+    control: &PlayControl,
+    now: f32,
+    status: &mut Query<&mut Text, With<StatusText>>,
+    seed_label: &mut Query<&mut Text, (With<SeedLabel>, Without<StatusText>)>,
+    seed_color: &mut Query<&mut BackgroundColor, With<SeedCard>>,
+) {
+    let waves = sim.level.waves.len();
+    let started = sim
+        .level
+        .waves
+        .iter()
+        .filter(|wave| wave.time <= sim.time)
+        .count();
+    let wave_text = if let Some(next) = sim.level.waves.iter().find(|wave| wave.time > sim.time) {
+        format!(
+            "oleada {}/{} en {:.0}s",
+            started + 1,
+            waves,
+            (next.time - sim.time).max(0.0)
+        )
+    } else {
+        format!("oleada {waves}/{waves}")
+    };
+    let flag = if control.paused {
+        "   [PAUSA]"
+    } else {
+        match sim.outcome {
+            Outcome::Won => "   [VICTORIA]",
+            Outcome::Lost => "   [DERROTA]",
+            Outcome::Playing => "",
+        }
+    };
+    let notice = if now < control.notice_until {
+        format!("\n{}", control.notice)
+    } else {
+        String::new()
+    };
+    let line = format!(
+        "☀ {}    {wave_text}    zombies {}/{}{flag}\nP: pausa    R: reiniciar    Esc: menú{notice}",
+        sim.sun,
+        sim.killed,
+        sim.level.total_zombies(),
+    );
+    for mut text in status.iter_mut() {
+        text.0 = line.clone();
+    }
+
+    let cost = plant_def(PlantKind::PeaShooter).cost;
+    let (label, color) = match sim.seed_status(0) {
+        SeedStatus::Ready => (
+            format!("Lanzaguisantes  {cost}"),
+            Color::srgb(0.32, 0.58, 0.24),
+        ),
+        SeedStatus::Cooldown => {
+            let left = sim
+                .seeds
+                .first()
+                .map(|seed| seed.cooldown_left)
+                .unwrap_or(0.0);
+            (format!("Recarga  {left:.1}s"), Color::srgb(0.32, 0.32, 0.3))
+        }
+        SeedStatus::NoSun => (
+            format!("Faltan soles  {cost}"),
+            Color::srgb(0.45, 0.3, 0.16),
+        ),
+    };
+    for mut text in seed_label.iter_mut() {
+        text.0 = label.clone();
+    }
+    for mut background in seed_color.iter_mut() {
+        *background = BackgroundColor(color);
+    }
+}
+
+fn spawn_banner(commands: &mut Commands, outcome: Outcome) {
+    let title = match outcome {
+        Outcome::Won => "El jardín está a salvo",
+        Outcome::Lost => "Los zombies llegaron a la casa",
+        Outcome::Playing => return,
+    };
+    commands
+        .spawn((
+            Node {
+                position_type: PositionType::Absolute,
+                left: Val::Px(0.0),
+                top: Val::Px(0.0),
+                width: Val::Percent(100.0),
+                height: Val::Percent(100.0),
+                align_items: AlignItems::Center,
+                justify_content: JustifyContent::Center,
+                ..default()
+            },
+            BackgroundColor(Color::srgba(0.0, 0.0, 0.0, 0.45)),
+            Banner,
+            PlayPiece,
+        ))
+        .with_children(|parent| {
+            parent.spawn((
+                Text::new(format!("{title}\nR: reiniciar    Esc: menú")),
+                TextFont::from_font_size(32.0),
+                TextColor(Color::srgb(0.98, 0.95, 0.75)),
+            ));
+        });
+}
+
+fn cursor_on_board(window: Option<&Window>) -> Option<Vec2> {
+    let window = window?;
+    let pos = window.cursor_position()?;
+    let size = window.size();
+    Some(Vec2::new(
+        pos.x - size.x * 0.5 + SCREEN_W * 0.5,
+        pos.y - size.y * 0.5 + SCREEN_H * 0.5,
+    ))
+}
+
+fn fresh_seed(extra: f32) -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|elapsed| elapsed.as_secs().wrapping_add(extra as u64))
+        .unwrap_or(1)
+}

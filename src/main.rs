@@ -84,48 +84,46 @@ fn main() {
         std::process::exit(1);
     }
 
-    App::new()
-        .add_plugins(
-            DefaultPlugins
-                .set(WindowPlugin {
-                    primary_window: Some(Window {
-                        title: "PVZ Rust - Reanim Viewer".into(),
-                        resolution: (800.0_f32, 600.0_f32).into(),
-                        ..default()
-                    }),
+    let mut app = App::new();
+    app.add_plugins(
+        DefaultPlugins
+            .set(WindowPlugin {
+                primary_window: Some(Window {
+                    title: "PVZ Rust".into(),
+                    resolution: (800.0_f32, 600.0_f32).into(),
                     ..default()
-                })
-                .set(ImagePlugin::default_nearest()),
+                }),
+                ..default()
+            })
+            .set(ImagePlugin::default_nearest()),
+    )
+    .init_state::<AppState>()
+    .insert_resource(CharacterLibraries {
+        zombie: zombie_data,
+        peashooter: peashooter_data,
+    })
+    .insert_resource(GameCatalog(catalog))
+    .insert_resource(viewer::ReanimCache::default())
+    .add_systems(OnEnter(AppState::Menu), menu::setup_menu)
+    .add_systems(OnExit(AppState::Menu), menu::cleanup_menu)
+    .add_systems(
+        Update,
+        menu::menu_interaction.run_if(in_state(AppState::Menu)),
+    )
+    .add_systems(OnEnter(AppState::TestMode), viewer::setup_test_mode)
+    .add_systems(OnExit(AppState::TestMode), viewer::cleanup_test_mode)
+    .add_systems(
+        Update,
+        (
+            viewer::navigate,
+            viewer::switch_animation,
+            viewer::play_animation,
+            systems::move_characters,
+            viewer::paint_entity_buttons,
         )
-        .init_state::<AppState>()
-        .insert_resource(CharacterLibraries {
-            zombie: zombie_data,
-            peashooter: peashooter_data,
-        })
-        .insert_resource(GameCatalog(catalog))
-        .insert_resource(viewer::ReanimCache::default())
-        .add_systems(OnEnter(AppState::Menu), menu::setup_menu)
-        .add_systems(OnExit(AppState::Menu), menu::cleanup_menu)
-        .add_systems(
-            Update,
-            menu::menu_interaction.run_if(in_state(AppState::Menu)),
-        )
-        .add_systems(OnEnter(AppState::Play), menu::setup_play)
-        .add_systems(OnExit(AppState::Play), menu::cleanup_play)
-        .add_systems(Update, menu::play_input.run_if(in_state(AppState::Play)))
-        .add_systems(OnEnter(AppState::TestMode), viewer::setup_test_mode)
-        .add_systems(OnExit(AppState::TestMode), viewer::cleanup_test_mode)
-        .add_systems(
-            Update,
-            (
-                viewer::navigate,
-                viewer::switch_animation,
-                viewer::play_animation,
-                systems::move_characters,
-                viewer::paint_entity_buttons,
-            )
-                .chain()
-                .run_if(in_state(AppState::TestMode)),
-        )
-        .run();
+            .chain()
+            .run_if(in_state(AppState::TestMode)),
+    );
+    game::view::register(&mut app);
+    app.run();
 }
