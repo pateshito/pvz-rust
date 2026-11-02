@@ -1,3 +1,4 @@
+mod assets;
 mod character;
 mod components;
 mod game;
@@ -9,10 +10,11 @@ mod systems;
 mod utils;
 mod viewer;
 
+use assets::catalog::EntityCatalog;
 use bevy::prelude::*;
 use reanim::{parse_reanim, ReanimData};
 use resources::{CharacterLibraries, SelectedCharacter};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use utils::assets_dir;
 
 #[derive(States, Default, Debug, Clone, PartialEq, Eq, Hash)]
@@ -44,15 +46,36 @@ fn load_reanim_or_exit(label: &str, path: &Path) -> ReanimData {
     }
 }
 
+fn reanim_path(catalog: &EntityCatalog, entity: &str, name: &str) -> PathBuf {
+    catalog
+        .entity(entity)
+        .and_then(|e| e.reanim(name))
+        .map(|r| r.path.clone())
+        .unwrap_or_else(|| {
+            eprintln!("❌ No existe el reanim '{name}' de la entidad '{entity}'");
+            std::process::exit(1);
+        })
+}
+
 fn main() {
     let assets = assets_dir();
 
-    let zombie_data =
-        load_reanim_or_exit("Zombie", &assets.join("animations/Zombie/Zombie.reanim"));
-    let mut peashooter_data = load_reanim_or_exit(
-        "PeaShooter",
-        &assets.join("animations/PeaShooter/PeaShooter.reanim"),
+    let catalog = EntityCatalog::discover(&assets).unwrap_or_else(|e| {
+        eprintln!("{e}");
+        eprintln!("   Carpeta de assets esperada: {:?}", assets);
+        std::process::exit(1);
+    });
+    println!(
+        "📚 Catálogo: {} entidades, {} .reanim",
+        catalog.len(),
+        catalog.reanim_count()
     );
+
+    let zombie_path = reanim_path(&catalog, "Zombie", "Zombie");
+    let peashooter_path = reanim_path(&catalog, "PeaShooter", "PeaShooter");
+
+    let zombie_data = load_reanim_or_exit("Zombie", &zombie_path);
+    let mut peashooter_data = load_reanim_or_exit("PeaShooter", &peashooter_path);
     // El PeaShooter solo tiene 2 estados (idle / shooting) con la planta completa.
     if let Err(e) = peashooter::build_states(&mut peashooter_data) {
         eprintln!("{e}");

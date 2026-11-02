@@ -64,8 +64,8 @@ pub struct ReanimData {
 }
 
 pub fn parse_reanim(path: &Path) -> Result<ReanimData, String> {
-    let content = fs::read_to_string(path)
-        .map_err(|e| format!("❌ No se pudo leer {:?}: {}", path, e))?;
+    let content =
+        fs::read_to_string(path).map_err(|e| format!("❌ No se pudo leer {:?}: {}", path, e))?;
 
     let fps = Regex::new(r"<fps>(\d+)</fps>")
         .unwrap()
@@ -136,8 +136,12 @@ pub fn parse_reanim(path: &Path) -> Result<ReanimData, String> {
                 .captures(fc)
                 .map(|c| c.get(1).unwrap().as_str().trim().to_string())
             {
-                cur.image = Some(v);
-                has_image = true;
+                // `<i></i>` significa "sin imagen" (los créditos lo usan en
+                // tracks que solo llevan `<text>`); no cuenta como sprite.
+                cur.image = if v.is_empty() { None } else { Some(v.clone()) };
+                if !v.is_empty() {
+                    has_image = true;
+                }
             }
 
             let f = val_f

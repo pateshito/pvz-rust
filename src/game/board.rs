@@ -46,7 +46,11 @@ mod tests {
     fn celdas_y_bordes() {
         assert_eq!(cell_at(41.0, 81.0), Some((0, 0)));
         assert_eq!(cell_at(759.0, 579.0), Some((4, 8)));
-        assert_eq!(cell_at(120.0, 180.0), Some((1, 1)), "el borde pertenece a la celda siguiente");
+        assert_eq!(
+            cell_at(120.0, 180.0),
+            Some((1, 1)),
+            "el borde pertenece a la celda siguiente"
+        );
         assert_eq!(cell_at(39.0, 100.0), None);
         assert_eq!(cell_at(100.0, 79.0), None);
         assert_eq!(cell_at(760.0, 100.0), None);

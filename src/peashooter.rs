@@ -101,7 +101,10 @@ pub fn build_states(data: &mut ReanimData) -> Result<(), String> {
         },
     ];
 
-    println!("🌱 PeaShooter: estados '{}' y '{}' ({} frames)", STATE_IDLE, STATE_SHOOTING, len);
+    println!(
+        "🌱 PeaShooter: estados '{}' y '{}' ({} frames)",
+        STATE_IDLE, STATE_SHOOTING, len
+    );
     Ok(())
 }
 
@@ -152,7 +155,13 @@ mod tests {
         ] {
             assert_eq!(track(&data, head).group, PartGroup::Head, "{head}");
         }
-        for body in ["stalk_top", "stalk_bottom", "backleaf", "frontleaf", "anim_stem"] {
+        for body in [
+            "stalk_top",
+            "stalk_bottom",
+            "backleaf",
+            "frontleaf",
+            "anim_stem",
+        ] {
             assert_eq!(track(&data, body).group, PartGroup::Body, "{body}");
         }
     }

@@ -4,7 +4,7 @@
 use crate::components::CharacterPart;
 use crate::reanim::{AnimState, PartGroup, ReanimData};
 use crate::resources::CharacterLibraries;
-use crate::utils::{asset_exists, get_allowlist, image_to_path};
+use crate::utils::{asset_exists, image_to_path};
 use crate::Character;
 use bevy::prelude::*;
 
@@ -99,12 +99,11 @@ pub fn spawn_parts(
     root: Entity,
     verbose: bool,
 ) -> (usize, usize) {
-    let allowlist = get_allowlist(character);
     let mut count = 0;
     let mut skipped = 0;
 
     for (idx, track) in data.tracks.iter().enumerate() {
-        if !allowlist.contains(&track.name.as_str()) {
+        if !track.has_image {
             continue;
         }
 
@@ -180,7 +179,12 @@ pub fn pose_part(
     let track = &data.tracks[part.track];
     let is_prop = track.name.starts_with("anim_");
     let is_head = track.group == PartGroup::Head;
-    let frame = local + if is_head { anim.head_start } else { anim.body_start };
+    let frame = local
+        + if is_head {
+            anim.head_start
+        } else {
+            anim.body_start
+        };
     let dx = if is_head {
         anim.head_dx.get(local).copied().unwrap_or(0.0)
     } else {

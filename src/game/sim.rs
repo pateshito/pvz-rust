@@ -127,7 +127,10 @@ pub enum SimEvent {
     /// Terminó la animación de muerte: hay que quitarlo.
     ZombieRemoved(Id),
     PeaFired(Id),
-    PeaRemoved { id: Id, hit: bool },
+    PeaRemoved {
+        id: Id,
+        hit: bool,
+    },
     SunSpawned(Id),
     SunCollected(Id),
     SunExpired(Id),
@@ -307,7 +310,11 @@ impl Sim {
             return;
         }
         let (lo, hi) = self.level.sky_sun_interval;
-        self.sky_timer = if hi > lo { self.rng.gen_range(lo..hi) } else { lo };
+        self.sky_timer = if hi > lo {
+            self.rng.gen_range(lo..hi)
+        } else {
+            lo
+        };
 
         let id = self.alloc_id();
         let sun = Sun {
@@ -621,13 +628,28 @@ mod tests {
     fn plantar_rechaza_los_casos_invalidos() {
         let mut sim = Sim::new(empty_level(), 1);
         sim.plant(PlantKind::PeaShooter, 0, 0).unwrap();
-        assert_eq!(sim.plant(PlantKind::PeaShooter, 1, 1), Err(PlantError::OnCooldown));
+        assert_eq!(
+            sim.plant(PlantKind::PeaShooter, 1, 1),
+            Err(PlantError::OnCooldown)
+        );
         run(&mut sim, 8.0);
-        assert_eq!(sim.plant(PlantKind::PeaShooter, 0, 0), Err(PlantError::CellOccupied));
-        assert_eq!(sim.plant(PlantKind::PeaShooter, 5, 0), Err(PlantError::OutOfBoard));
-        assert_eq!(sim.plant(PlantKind::PeaShooter, 0, 9), Err(PlantError::OutOfBoard));
+        assert_eq!(
+            sim.plant(PlantKind::PeaShooter, 0, 0),
+            Err(PlantError::CellOccupied)
+        );
+        assert_eq!(
+            sim.plant(PlantKind::PeaShooter, 5, 0),
+            Err(PlantError::OutOfBoard)
+        );
+        assert_eq!(
+            sim.plant(PlantKind::PeaShooter, 0, 9),
+            Err(PlantError::OutOfBoard)
+        );
         sim.sun = 99;
-        assert_eq!(sim.plant(PlantKind::PeaShooter, 1, 1), Err(PlantError::NotEnoughSun));
+        assert_eq!(
+            sim.plant(PlantKind::PeaShooter, 1, 1),
+            Err(PlantError::NotEnoughSun)
+        );
         assert_eq!(sim.seed_status(0), SeedStatus::NoSun);
         sim.sun = 100;
         assert!(sim.plant(PlantKind::PeaShooter, 1, 1).is_ok());
@@ -669,7 +691,10 @@ mod tests {
         }
         assert!(fired.len() >= 4, "{fired:?}");
         let first = fired[0];
-        assert!((first - 1.425 * 0.5).abs() < 0.05, "primer disparo a mitad de ciclo: {first}");
+        assert!(
+            (first - 1.425 * 0.5).abs() < 0.05,
+            "primer disparo a mitad de ciclo: {first}"
+        );
         for pair in fired.windows(2) {
             assert!((pair[1] - pair[0] - 1.425).abs() < 0.05, "{fired:?}");
         }
@@ -706,7 +731,11 @@ mod tests {
         assert!(sim.take_events().contains(&SimEvent::ZombieDied(z)));
         assert!(!sim.zombies[0].is_alive());
         run(&mut sim, 3.0);
-        assert_eq!(sim.zombies.len(), 1, "sigue en el suelo mientras dura la animacion");
+        assert_eq!(
+            sim.zombies.len(),
+            1,
+            "sigue en el suelo mientras dura la animacion"
+        );
         run(&mut sim, 0.5);
         assert!(sim.zombies.is_empty());
         assert!(sim.take_events().contains(&SimEvent::ZombieRemoved(z)));
@@ -749,7 +778,10 @@ mod tests {
         run(&mut sim, 3.0); // el doble de dps: la planta cae antes de 3 s
         assert!(sim.plants.is_empty());
         run(&mut sim, 0.2);
-        assert!(sim.zombies.iter().all(|z| z.status == ZombieStatus::Walking));
+        assert!(sim
+            .zombies
+            .iter()
+            .all(|z| z.status == ZombieStatus::Walking));
     }
 
     #[test]
@@ -768,7 +800,10 @@ mod tests {
         run(&mut sim, 5.0);
         assert_eq!(sim.outcome, Outcome::Lost);
         assert!(sim.take_events().contains(&SimEvent::Lost));
-        assert_eq!(sim.plant(PlantKind::PeaShooter, 0, 0), Err(PlantError::GameOver));
+        assert_eq!(
+            sim.plant(PlantKind::PeaShooter, 0, 0),
+            Err(PlantError::GameOver)
+        );
         let t = sim.time;
         sim.step(DT);
         assert_eq!(sim.time, t, "el tiempo se congela");
@@ -826,8 +861,14 @@ mod tests {
             let mut sim = Sim::new(Level::test_level(), seed);
             run(&mut sim, 60.0);
             (
-                sim.zombies.iter().map(|z| (z.row, z.x.to_bits())).collect::<Vec<_>>(),
-                sim.suns.iter().map(|s| (s.x.to_bits(), s.target_y.to_bits())).collect::<Vec<_>>(),
+                sim.zombies
+                    .iter()
+                    .map(|z| (z.row, z.x.to_bits()))
+                    .collect::<Vec<_>>(),
+                sim.suns
+                    .iter()
+                    .map(|s| (s.x.to_bits(), s.target_y.to_bits()))
+                    .collect::<Vec<_>>(),
             )
         };
         assert_eq!(play(7), play(7));
@@ -856,10 +897,19 @@ mod tests {
 
             let mut wanted: Vec<(usize, usize)> = Vec::new();
             for &(_, row) in &threatened {
-                let zombies_in_row = sim.zombies.iter().filter(|z| z.is_alive() && z.row == row).count();
-                let plants_in_row = (0..COLS).filter(|&c| sim.plant_at(row, c).is_some()).count();
+                let zombies_in_row = sim
+                    .zombies
+                    .iter()
+                    .filter(|z| z.is_alive() && z.row == row)
+                    .count();
+                let plants_in_row = (0..COLS)
+                    .filter(|&c| sim.plant_at(row, c).is_some())
+                    .count();
                 if plants_in_row < zombies_in_row.min(3) {
-                    if let Some(col) = [1usize, 2, 3].into_iter().find(|&c| sim.plant_at(row, c).is_none()) {
+                    if let Some(col) = [1usize, 2, 3]
+                        .into_iter()
+                        .find(|&c| sim.plant_at(row, c).is_none())
+                    {
                         wanted.push((row, col));
                     }
                 }
@@ -895,7 +945,14 @@ mod tests {
         let mut report = Vec::new();
         for seed in 0..40 {
             let (outcome, sim) = bot(Level::test_level(), seed, &[]);
-            report.push((seed, outcome, sim.time as u32, sim.killed, sim.plants.len(), sim.sun));
+            report.push((
+                seed,
+                outcome,
+                sim.time as u32,
+                sim.killed,
+                sim.plants.len(),
+                sim.sun,
+            ));
             if outcome == Outcome::Won {
                 wins += 1;
                 assert_eq!(sim.killed, Level::test_level().total_zombies());
