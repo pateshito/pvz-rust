@@ -34,16 +34,25 @@ pub const ALL_PLANTS: [PlantKind; 8] = [
 pub const MAX_LOADOUT: usize = 5;
 
 /// Planta que hay que completar para desbloquear cada una.
-/// `None` significa disponible desde el principio.
+/// `None` significa disponible desde el principio. Hay una sola planta nueva
+/// por nivel, en el orden de la campaña.
 pub fn plant_unlock_level(kind: PlantKind) -> Option<usize> {
     match kind {
         PlantKind::PeaShooter | PlantKind::Sunflower => None,
-        PlantKind::CherryBomb | PlantKind::Wallnut => Some(0),
-        PlantKind::PotatoMine => Some(1),
-        PlantKind::SnowPea => Some(2),
-        PlantKind::Chomper => Some(3),
-        PlantKind::Repeater => Some(4),
+        PlantKind::CherryBomb => Some(0),
+        PlantKind::Wallnut => Some(1),
+        PlantKind::PotatoMine => Some(2),
+        PlantKind::SnowPea => Some(3),
+        PlantKind::Chomper => Some(4),
+        PlantKind::Repeater => Some(5),
     }
+}
+
+/// Planta que se desbloquea al completar el nivel indicado.
+pub fn plant_unlocked_by_level(level: usize) -> Option<PlantKind> {
+    ALL_PLANTS
+        .into_iter()
+        .find(|kind| plant_unlock_level(*kind) == Some(level))
 }
 
 /// Plantas que disparan guisantes en línea recta.

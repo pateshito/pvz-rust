@@ -163,6 +163,7 @@ impl Default for ViewerState {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::game::defs::plant_unlocked_by_level;
 
     #[test]
     fn el_progreso_desbloquea_en_orden() {
@@ -195,28 +196,41 @@ mod tests {
         let mut progress = LevelProgress::default();
         assert!(progress.plant_unlocked(PlantKind::Sunflower));
         assert!(progress.plant_unlocked(PlantKind::PeaShooter));
-        assert!(!progress.plant_unlocked(PlantKind::Wallnut));
+        assert!(!progress.plant_unlocked(PlantKind::CherryBomb));
 
         progress.clear(0);
         assert!(progress.plant_unlocked(PlantKind::CherryBomb));
-        assert!(progress.plant_unlocked(PlantKind::Wallnut));
-        assert!(!progress.plant_unlocked(PlantKind::SnowPea));
-        assert!(!progress.plant_unlocked(PlantKind::PotatoMine));
+        assert!(!progress.plant_unlocked(PlantKind::Wallnut));
 
         progress.clear(1);
+        assert!(progress.plant_unlocked(PlantKind::Wallnut));
+        assert!(!progress.plant_unlocked(PlantKind::PotatoMine));
+
+        progress.clear(2);
         assert!(progress.plant_unlocked(PlantKind::PotatoMine));
         assert!(!progress.plant_unlocked(PlantKind::SnowPea));
 
-        progress.clear(2);
+        progress.clear(3);
         assert!(progress.plant_unlocked(PlantKind::SnowPea));
         assert!(!progress.plant_unlocked(PlantKind::Chomper));
 
-        progress.clear(3);
+        progress.clear(4);
         assert!(progress.plant_unlocked(PlantKind::Chomper));
         assert!(!progress.plant_unlocked(PlantKind::Repeater));
 
-        progress.clear(4);
+        progress.clear(5);
         assert!(progress.plant_unlocked(PlantKind::Repeater));
+    }
+
+    #[test]
+    fn cada_nivel_desbloquea_una_sola_planta() {
+        let mut seen = Vec::new();
+        for level in 0..LEVEL_COUNT {
+            let kind = plant_unlocked_by_level(level).expect("un nivel sin planta nueva");
+            assert!(!seen.contains(&kind), "planta repetida en el nivel {level}");
+            seen.push(kind);
+        }
+        assert_eq!(seen.len(), LEVEL_COUNT);
     }
 
     #[test]

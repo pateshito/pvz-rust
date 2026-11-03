@@ -11,7 +11,7 @@ pub struct Wave {
 }
 
 /// Niveles de la campaña de prueba.
-pub const LEVEL_COUNT: usize = 5;
+pub const LEVEL_COUNT: usize = 6;
 
 #[derive(Clone, Debug)]
 pub struct Level {
@@ -64,7 +64,7 @@ impl Level {
         }
     }
 
-    /// Nivel de la campaña. Los cinco comparten zombi básico; suben el número
+    /// Nivel de la campaña. Los seis comparten zombi básico; suben el número
     /// de oleadas, bajan los soles iniciales y añaden semillas de apoyo.
     pub fn campaign(index: usize) -> Level {
         let wave = |time: f32, n: usize| Wave {
@@ -137,7 +137,7 @@ impl Level {
                 sky_sun_value: 25,
             },
             _ => Level {
-                name: "Día 5 · La horda",
+                name: "Día 6 · Última línea",
                 start_sun: 50,
                 seeds: vec![
                     PlantKind::Sunflower,
@@ -147,17 +147,18 @@ impl Level {
                     PlantKind::PotatoMine,
                 ],
                 waves: vec![
-                    wave(14.0, 1),
-                    wave(30.0, 2),
-                    wave(50.0, 3),
-                    wave(70.0, 3),
-                    wave(90.0, 4),
-                    wave(112.0, 4),
-                    wave(136.0, 5),
-                    wave(160.0, 5),
+                    wave(12.0, 1),
+                    wave(28.0, 2),
+                    wave(46.0, 3),
+                    wave(66.0, 3),
+                    wave(86.0, 4),
+                    wave(108.0, 4),
+                    wave(130.0, 5),
+                    wave(152.0, 5),
+                    wave(176.0, 6),
                 ],
                 first_sky_sun: 3.0,
-                sky_sun_interval: (3.5, 5.5),
+                sky_sun_interval: (3.0, 5.0),
                 sky_sun_value: 25,
             },
         }
