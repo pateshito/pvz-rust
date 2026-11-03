@@ -2,9 +2,11 @@ mod assets;
 mod character;
 mod components;
 mod game;
+mod level_select;
 mod menu;
 mod peashooter;
 mod plant_anim;
+mod plant_select;
 mod reanim;
 mod resources;
 mod systems;
@@ -17,7 +19,7 @@ use bevy::prelude::*;
 use bevy::render::view::VisibilitySystems;
 use bevy::transform::TransformSystem;
 use reanim::{parse_reanim, ReanimData};
-use resources::{CharacterLibraries, GameCatalog};
+use resources::{CharacterLibraries, GameCatalog, LevelProgress, PlantLoadout};
 use std::path::{Path, PathBuf};
 use utils::assets_dir;
 
@@ -25,6 +27,8 @@ use utils::assets_dir;
 pub enum AppState {
     #[default]
     Menu,
+    LevelSelect,
+    PlantSelect,
     Play,
     TestMode,
 }
@@ -118,6 +122,8 @@ fn main() {
         sun: sun_data,
     })
     .insert_resource(GameCatalog(catalog))
+    .insert_resource(LevelProgress::default())
+    .insert_resource(PlantLoadout::default())
     .insert_resource(viewer::ReanimCache::default())
     // Tras calcular los `GlobalTransform` y antes de decidir qué se ve.
     .add_systems(
@@ -131,6 +137,36 @@ fn main() {
     .add_systems(
         Update,
         menu::menu_interaction.run_if(in_state(AppState::Menu)),
+    )
+    .add_systems(
+        OnEnter(AppState::LevelSelect),
+        level_select::setup_level_select,
+    )
+    .add_systems(
+        OnExit(AppState::LevelSelect),
+        level_select::cleanup_level_select,
+    )
+    .add_systems(
+        Update,
+        (
+            level_select::level_select_input,
+            level_select::level_select_interaction,
+        )
+            .run_if(in_state(AppState::LevelSelect)),
+    )
+    .add_systems(OnEnter(AppState::PlantSelect), plant_select::setup)
+    .add_systems(OnExit(AppState::PlantSelect), plant_select::cleanup)
+    .add_systems(
+        Update,
+        (
+            plant_select::plant_select_input,
+            plant_select::plant_select_interaction,
+            apply_deferred,
+            plant_select::paint_cards,
+            plant_select::pose_icons,
+        )
+            .chain()
+            .run_if(in_state(AppState::PlantSelect)),
     )
     .add_systems(OnEnter(AppState::TestMode), viewer::setup_test_mode)
     .add_systems(OnExit(AppState::TestMode), viewer::cleanup_test_mode)

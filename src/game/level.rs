@@ -10,6 +10,9 @@ pub struct Wave {
     pub zombies: Vec<ZombieKind>,
 }
 
+/// Niveles de la campaña de prueba.
+pub const LEVEL_COUNT: usize = 5;
+
 #[derive(Clone, Debug)]
 pub struct Level {
     pub name: &'static str,
@@ -58,6 +61,105 @@ impl Level {
             first_sky_sun: 4.0,
             sky_sun_interval: (4.0, 6.0),
             sky_sun_value: 25,
+        }
+    }
+
+    /// Nivel de la campaña. Los cinco comparten zombi básico; suben el número
+    /// de oleadas, bajan los soles iniciales y añaden semillas de apoyo.
+    pub fn campaign(index: usize) -> Level {
+        let wave = |time: f32, n: usize| Wave {
+            time,
+            zombies: vec![ZombieKind::Basic; n],
+        };
+        match index.min(LEVEL_COUNT - 1) {
+            0 => Level {
+                name: "Día 1 · Primeros pasos",
+                start_sun: 50,
+                seeds: vec![PlantKind::Sunflower, PlantKind::PeaShooter],
+                waves: vec![wave(20.0, 1), wave(45.0, 2), wave(75.0, 2)],
+                first_sky_sun: 4.0,
+                sky_sun_interval: (4.0, 6.0),
+                sky_sun_value: 25,
+            },
+            1 => Level {
+                name: "Día 2 · Nuez de guardia",
+                start_sun: 50,
+                seeds: vec![
+                    PlantKind::Sunflower,
+                    PlantKind::PeaShooter,
+                    PlantKind::Wallnut,
+                ],
+                waves: vec![wave(18.0, 1), wave(40.0, 2), wave(65.0, 2), wave(95.0, 3)],
+                first_sky_sun: 4.0,
+                sky_sun_interval: (4.0, 6.0),
+                sky_sun_value: 25,
+            },
+            2 => Level {
+                name: "Día 3 · Hielo",
+                start_sun: 50,
+                seeds: vec![
+                    PlantKind::Sunflower,
+                    PlantKind::PeaShooter,
+                    PlantKind::SnowPea,
+                    PlantKind::Wallnut,
+                ],
+                waves: vec![
+                    wave(18.0, 1),
+                    wave(38.0, 2),
+                    wave(60.0, 3),
+                    wave(85.0, 3),
+                    wave(110.0, 4),
+                ],
+                first_sky_sun: 4.0,
+                sky_sun_interval: (4.0, 6.0),
+                sky_sun_value: 25,
+            },
+            3 => Level {
+                name: "Día 4 · Papa mina",
+                start_sun: 50,
+                seeds: vec![
+                    PlantKind::Sunflower,
+                    PlantKind::PeaShooter,
+                    PlantKind::SnowPea,
+                    PlantKind::Wallnut,
+                    PlantKind::PotatoMine,
+                ],
+                waves: vec![
+                    wave(16.0, 1),
+                    wave(36.0, 2),
+                    wave(58.0, 3),
+                    wave(82.0, 3),
+                    wave(106.0, 4),
+                    wave(132.0, 4),
+                ],
+                first_sky_sun: 3.5,
+                sky_sun_interval: (4.0, 6.0),
+                sky_sun_value: 25,
+            },
+            _ => Level {
+                name: "Día 5 · La horda",
+                start_sun: 50,
+                seeds: vec![
+                    PlantKind::Sunflower,
+                    PlantKind::PeaShooter,
+                    PlantKind::SnowPea,
+                    PlantKind::Wallnut,
+                    PlantKind::PotatoMine,
+                ],
+                waves: vec![
+                    wave(14.0, 1),
+                    wave(30.0, 2),
+                    wave(50.0, 3),
+                    wave(70.0, 3),
+                    wave(90.0, 4),
+                    wave(112.0, 4),
+                    wave(136.0, 5),
+                    wave(160.0, 5),
+                ],
+                first_sky_sun: 3.0,
+                sky_sun_interval: (3.5, 5.5),
+                sky_sun_value: 25,
+            },
         }
     }
 }

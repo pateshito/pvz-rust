@@ -1,5 +1,6 @@
 use crate::assets::catalog::EntityCatalog;
-use crate::game::defs::PlantKind;
+use crate::game::defs::{plant_unlock_level, PlantKind};
+use crate::game::level::LEVEL_COUNT;
 use crate::reanim::ReanimData;
 use crate::Character;
 use bevy::prelude::*;
@@ -35,6 +36,72 @@ impl CharacterLibraries {
             PlantKind::Wallnut => &self.wallnut,
             PlantKind::PotatoMine => &self.potatomine,
         }
+    }
+}
+
+/// Progreso de la campaña. `cleared` cuenta los niveles superados desde el
+/// primero; el nivel `cleared` es el siguiente desbloqueado.
+#[derive(Resource, Debug, Clone, Default)]
+pub struct LevelProgress {
+    pub cleared: usize,
+    pub selected: usize,
+}
+
+impl LevelProgress {
+    pub fn is_unlocked(&self, index: usize) -> bool {
+        index < LEVEL_COUNT && index <= self.cleared
+    }
+
+    pub fn is_cleared(&self, index: usize) -> bool {
+        index < self.cleared
+    }
+
+    /// Marca el nivel como superado y desbloquea el siguiente.
+    pub fn clear(&mut self, index: usize) {
+        if index == self.cleared {
+            self.cleared = (self.cleared + 1).min(LEVEL_COUNT);
+        }
+    }
+
+    pub fn plant_unlocked(&self, kind: PlantKind) -> bool {
+        match plant_unlock_level(kind) {
+            None => true,
+            Some(level) => self.is_cleared(level),
+        }
+    }
+}
+
+/// Plantas elegidas para el próximo nivel. Se guarda en el orden de `ALL_PLANTS`.
+#[derive(Resource, Debug, Clone)]
+pub struct PlantLoadout {
+    pub chosen: Vec<PlantKind>,
+}
+
+impl Default for PlantLoadout {
+    fn default() -> Self {
+        Self {
+            chosen: vec![PlantKind::Sunflower, PlantKind::PeaShooter],
+        }
+    }
+}
+
+impl PlantLoadout {
+    pub fn toggle(&mut self, kind: PlantKind) -> Result<(), &'static str> {
+        if let Some(index) = self.chosen.iter().position(|&chosen| chosen == kind) {
+            if self.chosen.len() == 1 {
+                return Err("Debes llevar al menos una planta.");
+            }
+            self.chosen.remove(index);
+        } else {
+            self.chosen.push(kind);
+            self.chosen.sort_by_key(|plant| {
+                crate::game::defs::ALL_PLANTS
+                    .iter()
+                    .position(|candidate| candidate == plant)
+                    .unwrap_or(usize::MAX)
+            });
+        }
+        Ok(())
     }
 }
 
@@ -81,5 +148,65 @@ impl Default for ViewerState {
             skipped: 0,
             missing: Vec::new(),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn el_progreso_desbloquea_en_orden() {
+        let mut progress = LevelProgress::default();
+        assert!(progress.is_unlocked(0));
+        assert!(!progress.is_unlocked(1));
+
+        progress.clear(1); // nivel no desbloqueado: no salta
+        assert!(!progress.is_unlocked(1));
+
+        progress.clear(0);
+        assert!(progress.is_cleared(0));
+        assert!(progress.is_unlocked(1));
+        assert!(!progress.is_unlocked(2));
+    }
+
+    #[test]
+    fn el_progreso_no_pasa_del_ultimo_nivel() {
+        let mut progress = LevelProgress::default();
+        for index in 0..LEVEL_COUNT {
+            progress.clear(index);
+        }
+        assert_eq!(progress.cleared, LEVEL_COUNT);
+        progress.clear(LEVEL_COUNT - 1);
+        assert_eq!(progress.cleared, LEVEL_COUNT);
+    }
+
+    #[test]
+    fn las_plantas_se_desbloquean_por_nivel() {
+        let mut progress = LevelProgress::default();
+        assert!(progress.plant_unlocked(PlantKind::Sunflower));
+        assert!(progress.plant_unlocked(PlantKind::PeaShooter));
+        assert!(!progress.plant_unlocked(PlantKind::Wallnut));
+
+        progress.clear(0);
+        assert!(progress.plant_unlocked(PlantKind::Wallnut));
+        assert!(!progress.plant_unlocked(PlantKind::SnowPea));
+
+        progress.clear(1);
+        assert!(progress.plant_unlocked(PlantKind::SnowPea));
+        assert!(!progress.plant_unlocked(PlantKind::PotatoMine));
+
+        progress.clear(2);
+        assert!(progress.plant_unlocked(PlantKind::PotatoMine));
+    }
+
+    #[test]
+    fn el_equipamiento_no_se_queda_vacio() {
+        let mut loadout = PlantLoadout::default();
+        assert_eq!(loadout.chosen.len(), 2);
+        assert!(loadout.toggle(PlantKind::Sunflower).is_ok());
+        assert_eq!(loadout.chosen, vec![PlantKind::PeaShooter]);
+        assert!(loadout.toggle(PlantKind::PeaShooter).is_err());
+        assert_eq!(loadout.chosen, vec![PlantKind::PeaShooter]);
     }
 }

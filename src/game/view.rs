@@ -23,7 +23,7 @@ use crate::game::sim::{
 };
 use crate::peashooter::{state_index, STATE_IDLE, STATE_SHOOTING};
 use crate::reanim::{ReanimData, BLINK_PERIOD};
-use crate::resources::CharacterLibraries;
+use crate::resources::{CharacterLibraries, LevelProgress, PlantLoadout};
 use crate::utils::{asset_exists, assets_dir, image_to_path};
 use crate::zombie_style::PlainStyle;
 use crate::AppState;
@@ -43,7 +43,7 @@ const ICON_TOP: f32 = 4.0;
 const ICON_BOTTOM: f32 = 16.0;
 /// El banco es UI y se dibuja después del césped. El reposo del sobre y lo que
 /// sigue al cursor van en esta capa, con una cámara que no limpia la pantalla.
-const PREVIEW_LAYER: usize = 1;
+pub(crate) const PREVIEW_LAYER: usize = 1;
 /// Casilla de la pala, dentro del hueco derecho del banco.
 const SHOVEL_W: f32 = 70.0;
 const SHOVEL_H: f32 = 72.0;
@@ -193,6 +193,8 @@ fn setup(
     mut commands: Commands,
     asset_server: Res<AssetServer>,
     libraries: Res<CharacterLibraries>,
+    progress: Res<LevelProgress>,
+    loadout: Res<PlantLoadout>,
 ) {
     // La UI se queda en esta cámara. La otra solo dibuja el modelo del sobre.
     commands.spawn((Camera2d, IsDefaultUiCamera, PlayPiece));
@@ -230,7 +232,7 @@ fn setup(
         PlayPiece,
     ));
 
-    let level = Level::test_level();
+    let level = campaign_level(&progress, &loadout);
     // Banco de semillas: la imagen del juego, el contador de soles a la
     // izquierda y un sobre por planta.
     commands
@@ -389,7 +391,7 @@ fn input(
     time: Res<Time>,
 ) {
     if keys.just_pressed(KeyCode::Escape) {
-        next_state.set(AppState::Menu);
+        next_state.set(AppState::LevelSelect);
         return;
     }
     if keys.just_pressed(KeyCode::KeyR) {
@@ -510,6 +512,8 @@ fn simulate(
     mut sim: ResMut<Match>,
     mut control: ResMut<PlayControl>,
     mut actors: ResMut<Actors>,
+    mut progress: ResMut<LevelProgress>,
+    loadout: Res<PlantLoadout>,
     banners: Query<Entity, With<Banner>>,
     mut hover: Query<(&mut Transform, &mut Sprite, &mut Visibility), With<HoverCell>>,
     windows: Query<&Window, With<PrimaryWindow>>,
@@ -526,7 +530,7 @@ fn simulate(
         for entity in &banners {
             commands.entity(entity).despawn_recursive();
         }
-        sim.0 = Sim::new(Level::test_level(), fresh_seed(sim.0.time));
+        sim.0 = Sim::new(campaign_level(&progress, &loadout), fresh_seed(sim.0.time));
         *control = fresh_control();
     }
 
@@ -549,6 +553,10 @@ fn simulate(
     }
 
     if sim.0.outcome != Outcome::Playing && !control.banner {
+        if sim.0.outcome == Outcome::Won {
+            let selected = progress.selected;
+            progress.clear(selected);
+        }
         spawn_banner(&mut commands, sim.0.outcome);
         control.banner = true;
     }
@@ -1271,7 +1279,10 @@ fn icon_box(slot: usize) -> ScreenBox {
 
 /// Origen y escala para que `bounds` (espacio del `.reanim`, y hacia abajo) llene la caja.
 fn fit_preview(slot: usize, bounds: ScreenBox) -> (f32, Vec2) {
-    let target = icon_box(slot);
+    fit_box(icon_box(slot), bounds)
+}
+
+fn fit_box(target: ScreenBox, bounds: ScreenBox) -> (f32, Vec2) {
     let scale =
         (target.width() / bounds.width().max(1.0)).min(target.height() / bounds.height().max(1.0));
     let root = Vec2::new(
@@ -1279,6 +1290,79 @@ fn fit_preview(slot: usize, bounds: ScreenBox) -> (f32, Vec2) {
         (target.min_y + target.max_y) * 0.5 - (bounds.min_y + bounds.max_y) * 0.5 * scale,
     );
     (scale, root)
+}
+
+/// Crea el modelo de una planta para el selector, encajado en una caja de
+/// pantalla `(min_x, min_y, max_x, max_y)`. Usa la misma pose que el sobre del HUD.
+pub(crate) fn spawn_plant_icon(
+    commands: &mut Commands,
+    asset_server: &AssetServer,
+    libraries: &CharacterLibraries,
+    kind: PlantKind,
+    target: (f32, f32, f32, f32),
+    z: f32,
+) -> Entity {
+    let def = plant_def(kind);
+    let data = libraries.plant(kind);
+    let bounds = idle_bounds(data, def.entity, preview_state(kind)).unwrap_or(ScreenBox {
+        min_x: 0.0,
+        min_y: 0.0,
+        max_x: 70.0,
+        max_y: 70.0,
+    });
+    let target = ScreenBox {
+        min_x: target.0,
+        min_y: target.1,
+        max_x: target.2,
+        max_y: target.3,
+    };
+    let (scale, root) = fit_box(target, bounds);
+    let (x, y) = screen_to_world(root.x, root.y);
+    let entity = commands
+        .spawn((
+            Transform::from_xyz(x, y, z).with_scale(Vec3::new(scale, scale, 1.0)),
+            Visibility::default(),
+        ))
+        .id();
+    spawn_parts(
+        commands,
+        asset_server,
+        data,
+        def.entity,
+        entity,
+        false,
+        Some(PREVIEW_LAYER),
+    );
+    entity
+}
+
+/// Posa las piezas de un modelo del selector. Frame 0 del reposo, igual que el HUD.
+pub(crate) fn pose_plant_icon(
+    parts: &mut Query<(
+        &mut Transform,
+        &mut Sprite,
+        &mut Visibility,
+        &mut CharacterPart,
+    )>,
+    children: &Children,
+    libraries: &CharacterLibraries,
+    kind: PlantKind,
+    asset_server: &AssetServer,
+) {
+    let data = libraries.plant(kind);
+    let (index, local) = frame_in(data, preview_state(kind), 0, false);
+    pose_children(
+        parts,
+        children,
+        data,
+        index,
+        local,
+        plant_def(kind).entity,
+        None,
+        asset_server,
+        0.0,
+        0.0,
+    );
 }
 
 /// Unión, a lo largo de todo el reposo, de las piezas visibles. Incluye rotación y sesgo.
@@ -1547,7 +1631,7 @@ fn spawn_banner(commands: &mut Commands, outcome: Outcome) {
         ))
         .with_children(|parent| {
             parent.spawn((
-                Text::new(format!("{title}\nR: reiniciar    Esc: menú")),
+                Text::new(format!("{title}\nR: reiniciar    Esc: niveles")),
                 TextFont::from_font_size(32.0),
                 TextColor(Color::srgb(0.98, 0.95, 0.75)),
             ));
@@ -1569,6 +1653,21 @@ fn fresh_seed(extra: f32) -> u64 {
         .duration_since(UNIX_EPOCH)
         .map(|elapsed| elapsed.as_secs().wrapping_add(extra as u64))
         .unwrap_or(1)
+}
+
+/// Nivel elegido con las plantas del equipamiento que sigan desbloqueadas.
+fn campaign_level(progress: &LevelProgress, loadout: &PlantLoadout) -> Level {
+    let mut level = Level::campaign(progress.selected);
+    let seeds: Vec<PlantKind> = loadout
+        .chosen
+        .iter()
+        .copied()
+        .filter(|kind| progress.plant_unlocked(*kind))
+        .collect();
+    if !seeds.is_empty() {
+        level.seeds = seeds;
+    }
+    level
 }
 
 #[cfg(test)]

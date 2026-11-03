@@ -15,6 +15,26 @@ pub enum ZombieKind {
     Basic,
 }
 
+/// Todas las plantas que puede mostrar el selector.
+pub const ALL_PLANTS: [PlantKind; 5] = [
+    PlantKind::Sunflower,
+    PlantKind::PeaShooter,
+    PlantKind::Wallnut,
+    PlantKind::SnowPea,
+    PlantKind::PotatoMine,
+];
+
+/// Nivel (0-based) que hay que completar para desbloquear la planta.
+/// `None` significa disponible desde el principio.
+pub fn plant_unlock_level(kind: PlantKind) -> Option<usize> {
+    match kind {
+        PlantKind::Sunflower | PlantKind::PeaShooter => None,
+        PlantKind::Wallnut => Some(0),
+        PlantKind::SnowPea => Some(1),
+        PlantKind::PotatoMine => Some(2),
+    }
+}
+
 /// Plantas que disparan guisantes en línea recta.
 #[derive(Clone, Copy, Debug)]
 pub struct ShooterDef {

@@ -21,6 +21,7 @@ pub struct MenuButton;
 #[derive(Component, Debug)]
 pub enum MenuAction {
     Play,
+    Plants,
     Test,
 }
 

@@ -68,6 +68,31 @@ pub fn setup_menu(mut commands: Commands) {
                     BorderColor(Color::srgb(0.3, 0.6, 0.3)),
                     BackgroundColor(Color::srgb(0.2, 0.4, 0.2)),
                     MenuButton,
+                    MenuAction::Plants,
+                    MenuEntity,
+                ))
+                .with_children(|parent| {
+                    parent.spawn((
+                        Text::new("Elegir plantas"),
+                        TextFont::from_font_size(24.0),
+                        TextColor(Color::WHITE),
+                    ));
+                });
+
+            parent
+                .spawn((
+                    Button,
+                    Node {
+                        width: Val::Px(300.0),
+                        height: Val::Px(60.0),
+                        justify_content: JustifyContent::Center,
+                        align_items: AlignItems::Center,
+                        border: UiRect::all(Val::Px(2.0)),
+                        ..default()
+                    },
+                    BorderColor(Color::srgb(0.3, 0.6, 0.3)),
+                    BackgroundColor(Color::srgb(0.2, 0.4, 0.2)),
+                    MenuButton,
                     MenuAction::Test,
                     MenuEntity,
                 ))
@@ -93,7 +118,8 @@ pub fn menu_interaction(
             Interaction::Pressed => {
                 println!("🎮 Botón presionado: {:?}", action);
                 next_state.set(match action {
-                    MenuAction::Play => AppState::Play,
+                    MenuAction::Play => AppState::LevelSelect,
+                    MenuAction::Plants => AppState::PlantSelect,
                     MenuAction::Test => AppState::TestMode,
                 });
             }
