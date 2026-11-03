@@ -450,9 +450,9 @@ fn input(
             let Some((row, col)) = cell_at(cursor.x, cursor.y) else {
                 return;
             };
-            if sim.0.dig(row, col).is_some() {
-                control.hand = Hand::Empty;
-            }
+            // Con o sin planta, la pala vuelve a su casilla tras el clic.
+            sim.0.dig(row, col);
+            control.hand = Hand::Empty;
         }
         Hand::Seed(index) => {
             let Some((row, col)) = cell_at(cursor.x, cursor.y) else {
@@ -1029,7 +1029,7 @@ fn sync_hand(
         ),
     >,
     mut shovel_icon: Query<
-        &mut Visibility,
+        &mut ImageNode,
         (
             With<ShovelIcon>,
             Without<CursorPlant>,
@@ -1040,11 +1040,12 @@ fn sync_hand(
 ) {
     let cursor = cursor_on_board(windows.iter().next());
     let holding_shovel = control.hand == Hand::Shovel;
+    // Con la pala en la mano su casilla no queda vacía: se ve atenuada.
     for mut icon in &mut shovel_icon {
-        *icon = if holding_shovel {
-            Visibility::Hidden
+        icon.color = if holding_shovel {
+            Color::srgba(1.0, 1.0, 1.0, 0.35)
         } else {
-            Visibility::Inherited
+            Color::WHITE
         };
     }
     for mut border in &mut shovel_button {
