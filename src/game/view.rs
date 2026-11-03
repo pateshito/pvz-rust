@@ -654,6 +654,11 @@ fn animate(
             control.clock,
             0.0,
         );
+        let tint = zombie_tint(zombie.chill);
+        let mut iter = parts.iter_many_mut(children);
+        while let Some((_, mut sprite, _, _)) = iter.fetch_next() {
+            sprite.color = tint;
+        }
     }
 
     for (actor, mut xf) in &mut peas {
@@ -1187,6 +1192,15 @@ fn place_hover(
     }
 }
 
+/// Celeste mientras el guisante de hielo lo tiene ralentizado.
+fn zombie_tint(chill: f32) -> Color {
+    if chill > 0.0 {
+        Color::srgb(0.55, 0.84, 1.0)
+    } else {
+        Color::WHITE
+    }
+}
+
 fn seed_tint(status: SeedStatus) -> Color {
     match status {
         SeedStatus::Ready => Color::WHITE,
@@ -1645,6 +1659,14 @@ mod tests {
             let fill = ((max_x - min_x) / target.width()).max((max_y - min_y) / target.height());
             assert!(fill > 0.97, "{} llena {fill}", def.entity);
         }
+    }
+
+    #[test]
+    fn el_hielo_tiñe_al_zombie_de_celeste() {
+        assert_eq!(zombie_tint(0.0), Color::WHITE);
+        let tint = zombie_tint(10.0).to_srgba();
+        assert!(tint.blue > tint.green && tint.green > tint.red);
+        assert!(tint.alpha > 0.9);
     }
 
     #[test]
