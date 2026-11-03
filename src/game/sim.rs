@@ -103,8 +103,16 @@ impl Zombie {
 
     /// Multiplicador de avance: la variación propia y, si está helado, la mitad.
     pub fn pace(&self) -> f32 {
-        let slow = if self.chill > 0.0 { 0.5 } else { 1.0 };
-        self.speed_mul * slow
+        self.speed_mul * self.chill_factor()
+    }
+
+    /// Lo que frena el hielo: la mitad de ritmo, tanto al caminar como al morder.
+    pub fn chill_factor(&self) -> f32 {
+        if self.chill > 0.0 {
+            0.5
+        } else {
+            1.0
+        }
     }
 }
 
@@ -641,7 +649,7 @@ impl Sim {
                 ZombieStatus::Eating(plant_id) => {
                     match self.plants.iter().position(|p| p.id == plant_id) {
                         Some(pi) => {
-                            self.plants[pi].hp -= def.bite_dps * dt;
+                            self.plants[pi].hp -= def.bite_dps * z.chill_factor() * dt;
                             if self.plants[pi].hp <= 0.0 {
                                 let plant = self.plants.remove(pi);
                                 self.grid[plant.row][plant.col] = None;
@@ -920,6 +928,24 @@ mod tests {
         let id = sim.plants[0].id;
         assert_eq!(sim.dig(0, 2), None);
         assert_eq!(sim.plant_at(0, 2).map(|plant| plant.id), Some(id));
+    }
+
+    #[test]
+    fn el_zombie_helado_muerde_a_la_mitad_de_ritmo() {
+        let perdida = |chill: f32| {
+            let mut sim = Sim::new(empty_level(), 1);
+            sim.plant(PlantKind::PeaShooter, 0, 2).unwrap();
+            let id = place_zombie(&mut sim, 0, 262.0);
+            let i = sim.zombies.iter().position(|z| z.id == id).unwrap();
+            sim.zombies[i].chill = chill;
+            let antes = sim.plants[0].hp;
+            run(&mut sim, 1.0);
+            antes - sim.plants[0].hp
+        };
+        let normal = perdida(0.0);
+        let helado = perdida(60.0);
+        assert!(normal > 0.0);
+        assert!((helado - normal * 0.5).abs() < 0.5, "{helado} vs {normal}");
     }
 
     #[test]
