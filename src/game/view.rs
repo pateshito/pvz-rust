@@ -14,12 +14,12 @@ use bevy::window::PrimaryWindow;
 use crate::character::{pose_part, spawn_parts};
 use crate::components::CharacterPart;
 use crate::game::board::{
-    cell_at, cell_left, cell_top, screen_to_world, CELL_H, CELL_W, SCREEN_H, SCREEN_W,
+    cell_at, cell_left, cell_top, screen_to_world, CELL_H, CELL_W, ROWS, SCREEN_H, SCREEN_W,
 };
 use crate::game::defs::{plant_def, plant_unlocked_by_level, zombie_def, PlantKind};
 use crate::game::level::Level;
 use crate::game::sim::{
-    Id, Outcome, SeedStatus, Sim, SimEvent, ZombieStatus, PEA_WIDTH, PEA_Y_OFFSET,
+    Id, MowerState, Outcome, SeedStatus, Sim, SimEvent, ZombieStatus, PEA_WIDTH, PEA_Y_OFFSET,
 };
 use crate::peashooter::{state_index, STATE_IDLE, STATE_SHOOTING};
 use crate::reanim::{ReanimData, BLINK_PERIOD};
@@ -63,6 +63,8 @@ const PLANT_DY: f32 = 6.0;
 /// Los pies de `anim_walk` están cerca de y = 115. Así quedan justo sobre el
 /// borde inferior del carril.
 const ZOMBIE_DY: f32 = -21.0;
+/// La cortadora apoya sus ruedas en el borde inferior del carril.
+const MOWER_DY: f32 = 28.0;
 
 #[derive(Component)]
 struct PlayPiece;
@@ -72,6 +74,9 @@ struct PlantActor(Id);
 
 #[derive(Component)]
 struct ZombieActor(Id);
+
+#[derive(Component)]
+struct MowerActor(usize);
 
 #[derive(Component)]
 struct PeaActor(Id);
@@ -395,7 +400,9 @@ fn setup(
 
     spawn_seed_previews(&mut commands, &asset_server, &libraries, &level);
 
-    commands.insert_resource(Match(Sim::new(level, fresh_seed(0.0))));
+    let sim = Sim::new(level, fresh_seed(0.0));
+    spawn_mowers(&mut commands, &asset_server, &libraries, &sim);
+    commands.insert_resource(Match(sim));
     commands.insert_resource(fresh_control());
     commands.insert_resource(Actors::default());
 }
@@ -620,11 +627,29 @@ fn animate(
     asset_server: Res<AssetServer>,
     mut plants: Query<
         (&PlantActor, &Children, &mut Transform),
-        (Without<CharacterPart>, Without<ZombieActor>),
+        (
+            Without<CharacterPart>,
+            Without<ZombieActor>,
+            Without<MowerActor>,
+        ),
     >,
     mut zombies: Query<
         (&ZombieActor, &Children, &mut Transform),
-        (Without<CharacterPart>, Without<PlantActor>),
+        (
+            Without<CharacterPart>,
+            Without<PlantActor>,
+            Without<MowerActor>,
+        ),
+    >,
+    mut mowers: Query<
+        (&MowerActor, &Children, &mut Transform, &mut Visibility),
+        (
+            Without<CharacterPart>,
+            Without<PlantActor>,
+            Without<ZombieActor>,
+            Without<PeaActor>,
+            Without<SunActor>,
+        ),
     >,
     mut parts: Query<(
         &mut Transform,
@@ -638,6 +663,7 @@ fn animate(
             Without<CharacterPart>,
             Without<PlantActor>,
             Without<ZombieActor>,
+            Without<MowerActor>,
         ),
     >,
     mut suns: Query<
@@ -647,6 +673,7 @@ fn animate(
             Without<PlantActor>,
             Without<ZombieActor>,
             Without<PeaActor>,
+            Without<MowerActor>,
         ),
     >,
     previews: Query<(&SeedPreview, &Children)>,
@@ -707,6 +734,40 @@ fn animate(
         while let Some((_, mut sprite, _, _)) = iter.fetch_next() {
             sprite.color = tint;
         }
+    }
+
+    let mower_data = &libraries.mower;
+    for (actor, children, mut root, mut vis) in &mut mowers {
+        let Some(mower) = sim.0.mowers.get(actor.0) else {
+            *vis = Visibility::Hidden;
+            continue;
+        };
+        if mower.state == MowerState::Gone {
+            *vis = Visibility::Hidden;
+            continue;
+        }
+        *vis = Visibility::Visible;
+        let (x, y) = screen_to_world(mower.x, cell_top(mower.row) + MOWER_DY);
+        root.translation.x = x;
+        root.translation.y = y;
+        root.translation.z = mower.row as f32 + 0.85;
+        let local = match mower.state {
+            MowerState::Ready => 0,
+            _ => (control.clock * mower_data.fps * 1.6) as usize,
+        };
+        let (index, local) = frame_in(mower_data, "anim_normal", local, true);
+        pose_children(
+            &mut parts,
+            children,
+            mower_data,
+            index,
+            local,
+            "LawnMower",
+            None,
+            &asset_server,
+            control.clock,
+            0.0,
+        );
     }
 
     for (actor, mut xf) in &mut peas {
@@ -854,7 +915,11 @@ fn apply_event(
         | SimEvent::PeaRemoved { id, .. }
         | SimEvent::SunCollected(id)
         | SimEvent::SunExpired(id) => actors.remove(commands, id),
-        SimEvent::ZombieDied(_) | SimEvent::Won | SimEvent::Lost => {}
+        SimEvent::ZombieDied(_)
+        | SimEvent::MowerStarted(_)
+        | SimEvent::MowerGone(_)
+        | SimEvent::Won
+        | SimEvent::Lost => {}
     }
 }
 
@@ -889,6 +954,34 @@ fn spawn_plant(
         None,
     );
     Some(root)
+}
+
+fn spawn_mowers(
+    commands: &mut Commands,
+    asset_server: &AssetServer,
+    libraries: &CharacterLibraries,
+    sim: &Sim,
+) {
+    for mower in &sim.mowers {
+        let (x, y) = screen_to_world(mower.x, cell_top(mower.row) + MOWER_DY);
+        let root = commands
+            .spawn((
+                Transform::from_xyz(x, y, mower.row as f32 + 0.85),
+                Visibility::default(),
+                MowerActor(mower.row),
+                PlayPiece,
+            ))
+            .id();
+        spawn_parts(
+            commands,
+            asset_server,
+            &libraries.mower,
+            "LawnMower",
+            root,
+            false,
+            None,
+        );
+    }
 }
 
 fn spawn_zombie(

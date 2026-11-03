@@ -23,6 +23,7 @@ pub struct CharacterLibraries {
     pub cherrybomb: ReanimData,
     pub chomper: ReanimData,
     pub sun: ReanimData,
+    pub mower: ReanimData,
 }
 
 impl CharacterLibraries {

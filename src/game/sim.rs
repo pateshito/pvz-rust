@@ -26,6 +26,13 @@ pub const SUN_PICK_RADIUS: f32 = 40.0;
 /// Origen x de un zombie recién nacido (justo fuera de la pantalla).
 pub const ZOMBIE_SPAWN_X: f32 = SCREEN_W + 10.0;
 
+/// Origen x de la cortadora en reposo, a la izquierda del césped.
+pub const MOWER_START_X: f32 = LAWN_LEFT - 70.0;
+/// Píxeles por segundo que avanza la cortadora al arrancar.
+pub const MOWER_SPEED: f32 = 420.0;
+/// El frente del zombie llega aquí y la cortadora de esa fila arranca.
+pub const MOWER_TRIGGER_X: f32 = LAWN_LEFT + 4.0;
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Outcome {
     Playing,
@@ -140,6 +147,21 @@ pub struct Sun {
     pub landed_for: f32,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum MowerState {
+    Ready,
+    Running,
+    Gone,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct Mower {
+    pub row: usize,
+    /// Origen del modelo, borde izquierdo.
+    pub x: f32,
+    pub state: MowerState,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum SimEvent {
     PlantPlaced(Id),
@@ -157,6 +179,8 @@ pub enum SimEvent {
     SunSpawned(Id),
     SunCollected(Id),
     SunExpired(Id),
+    MowerStarted(usize),
+    MowerGone(usize),
     Won,
     Lost,
 }
@@ -171,6 +195,8 @@ pub struct Sim {
     pub zombies: Vec<Zombie>,
     pub peas: Vec<Pea>,
     pub suns: Vec<Sun>,
+    /// Una cortadora por fila, en el mismo orden que `ROWS`.
+    pub mowers: Vec<Mower>,
     /// Zombies que ya salieron / que ya murieron.
     pub spawned: usize,
     pub killed: usize,
@@ -201,6 +227,13 @@ impl Sim {
             zombies: Vec::new(),
             peas: Vec::new(),
             suns: Vec::new(),
+            mowers: (0..ROWS)
+                .map(|row| Mower {
+                    row,
+                    x: MOWER_START_X,
+                    state: MowerState::Ready,
+                })
+                .collect(),
             spawned: 0,
             killed: 0,
             grid: [[None; COLS]; ROWS],
@@ -349,6 +382,7 @@ impl Sim {
         self.update_plants(dt);
         self.update_peas(dt);
         self.update_zombies(dt);
+        self.update_mowers(dt);
         self.check_outcome();
     }
 
@@ -401,19 +435,41 @@ impl Sim {
             }
             let kinds = wave.zombies.clone();
             self.next_wave += 1;
+            // Una oleada pequeña reparte sus zombies por filas distintas antes
+            // de repetir carril. Las grandes también evitan amontonarse.
+            let mut used = Vec::new();
             for kind in kinds {
-                self.spawn_zombie(kind);
+                let row = self.choose_row(&used);
+                used.push(row);
+                self.spawn_zombie(kind, row);
             }
         }
     }
 
-    fn spawn_zombie(&mut self, kind: ZombieKind) {
+    /// Fila para el próximo zombie: la que tenga menos zombies vivos y que no
+    /// se haya usado ya en esta oleada, si hay alguna libre.
+    fn choose_row(&mut self, used: &[usize]) -> usize {
+        let mut weight = [0usize; ROWS];
+        for zombie in &self.zombies {
+            if zombie.is_alive() {
+                weight[zombie.row] += 1;
+            }
+        }
+        for &row in used {
+            weight[row] += 1000;
+        }
+        let min = weight.iter().copied().min().unwrap_or(0);
+        let rows: Vec<usize> = (0..ROWS).filter(|&row| weight[row] == min).collect();
+        rows[self.rng.gen_range(0..rows.len())]
+    }
+
+    fn spawn_zombie(&mut self, kind: ZombieKind, row: usize) {
         let def = zombie_def(kind);
         let id = self.alloc_id();
         let zombie = Zombie {
             id,
             kind,
-            row: self.rng.gen_range(0..ROWS),
+            row,
             x: ZOMBIE_SPAWN_X + self.rng.gen_range(0.0..40.0),
             hp: def.max_hp,
             speed_mul: self.rng.gen_range(0.9..1.1),
@@ -727,11 +783,56 @@ impl Sim {
         }
     }
 
+    fn update_mowers(&mut self, dt: f32) {
+        for row in 0..ROWS {
+            if self.mowers[row].state == MowerState::Ready {
+                let triggered = self.zombies.iter().any(|z| {
+                    z.is_alive()
+                        && z.row == row
+                        && z.x + zombie_def(z.kind).bite_reach <= MOWER_TRIGGER_X
+                });
+                if triggered {
+                    self.mowers[row].state = MowerState::Running;
+                    self.events.push(SimEvent::MowerStarted(row));
+                }
+            }
+            if self.mowers[row].state != MowerState::Running {
+                continue;
+            }
+            let mower = &mut self.mowers[row];
+            let from = mower.x;
+            mower.x += MOWER_SPEED * dt;
+            let x = mower.x;
+            for zombie in &mut self.zombies {
+                if zombie.row != row || !zombie.is_alive() {
+                    continue;
+                }
+                let def = zombie_def(zombie.kind);
+                let left = zombie.x + def.hit_left;
+                let right = zombie.x + def.hit_right;
+                // Barre todo el tramo recorrido en este frame, sin huecos.
+                if right >= from - 20.0 && left <= x + 80.0 {
+                    zombie.hp = 0.0;
+                }
+            }
+            if x > SCREEN_W + 80.0 {
+                mower.state = MowerState::Gone;
+                self.events.push(SimEvent::MowerGone(row));
+            }
+        }
+    }
+
     fn check_outcome(&mut self) {
-        let lost = self
-            .zombies
-            .iter()
-            .any(|z| z.is_alive() && z.x + zombie_def(z.kind).bite_reach < LOSE_X);
+        let lost = self.zombies.iter().any(|z| {
+            if !z.is_alive() || z.x + zombie_def(z.kind).bite_reach >= LOSE_X {
+                return false;
+            }
+            // Solo una cortadora aún en reposo puede salvar esta fila.
+            !self
+                .mowers
+                .iter()
+                .any(|mower| mower.row == z.row && mower.state == MowerState::Ready)
+        });
         if lost {
             self.outcome = Outcome::Lost;
             self.events.push(SimEvent::Lost);
@@ -911,7 +1012,16 @@ mod tests {
                 break;
             }
         }
-        assert_eq!(hits, 14, "270 de vida / 20 de daño");
+        let def = zombie_def(ZombieKind::Basic);
+        let shot = plant_def(PlantKind::PeaShooter)
+            .shooter
+            .expect("el lanzaguisantes dispara");
+        let expected = (def.max_hp / shot.damage).ceil() as usize;
+        assert_eq!(
+            hits, expected,
+            "{} de vida / {} de daño",
+            def.max_hp, shot.damage
+        );
         assert_eq!(sim.killed, 1);
     }
 
@@ -995,7 +1105,7 @@ mod tests {
         let perdida = |chill: f32| {
             let mut sim = Sim::new(empty_level(), 1);
             sim.plant(PlantKind::PeaShooter, 0, 2).unwrap();
-            let id = place_zombie(&mut sim, 0, 262.0);
+            let id = place_zombie(&mut sim, 0, 250.0);
             let i = sim.zombies.iter().position(|z| z.id == id).unwrap();
             sim.zombies[i].chill = chill;
             let antes = sim.plants[0].hp;
@@ -1035,6 +1145,7 @@ mod tests {
     #[test]
     fn zombie_que_llega_a_la_casa_pierde_la_partida() {
         let mut sim = Sim::new(empty_level(), 1);
+        sim.mowers[4].state = MowerState::Gone;
         place_zombie(&mut sim, 4, 30.0);
         run(&mut sim, 5.0);
         assert_eq!(sim.outcome, Outcome::Lost);
@@ -1046,6 +1157,102 @@ mod tests {
         let t = sim.time;
         sim.step(DT);
         assert_eq!(sim.time, t, "el tiempo se congela");
+    }
+
+    #[test]
+    fn la_cortadora_salva_su_fila_y_se_gasta() {
+        let mut sim = Sim::new(empty_level(), 1);
+        let z = place_zombie(&mut sim, 0, 20.0);
+        place_zombie(&mut sim, 2, 500.0);
+        sim.step(DT);
+        assert_eq!(sim.mowers[0].state, MowerState::Running);
+        assert_eq!(sim.mowers[2].state, MowerState::Ready);
+        assert!(sim.take_events().contains(&SimEvent::MowerStarted(0)));
+
+        run(&mut sim, 1.0);
+        assert!(
+            sim.zombies
+                .iter()
+                .find(|s| s.id == z)
+                .map_or(true, |s| s.hp <= 0.0),
+            "la cortadora mata al zombie de su fila"
+        );
+        assert_eq!(sim.outcome, Outcome::Playing);
+
+        run(&mut sim, 3.0);
+        assert_eq!(sim.mowers[0].state, MowerState::Gone);
+        assert!(sim.take_events().contains(&SimEvent::MowerGone(0)));
+        assert!(sim
+            .mowers
+            .iter()
+            .skip(1)
+            .all(|m| m.state == MowerState::Ready));
+    }
+
+    #[test]
+    fn sin_cortadora_el_zombie_que_llega_pierde() {
+        let mut sim = Sim::new(empty_level(), 1);
+        sim.mowers[3].state = MowerState::Gone;
+        place_zombie(&mut sim, 3, 20.0);
+        run(&mut sim, 5.0);
+        assert_eq!(sim.outcome, Outcome::Lost);
+    }
+
+    #[test]
+    fn las_oleadas_pequenas_reparten_los_carriles() {
+        let mut sim = Sim::new(
+            Level {
+                waves: vec![Wave {
+                    time: 0.0,
+                    zombies: vec![ZombieKind::Basic, ZombieKind::Basic],
+                }],
+                ..empty_level()
+            },
+            7,
+        );
+        sim.step(DT);
+        assert_eq!(sim.zombies.len(), 2);
+        assert_ne!(
+            sim.zombies[0].row, sim.zombies[1].row,
+            "dos zombies no comparten carril si hay otros libres"
+        );
+    }
+
+    #[test]
+    fn una_oleada_pequena_evita_el_carril_ya_ocupado() {
+        let mut sim = Sim::new(
+            Level {
+                waves: vec![Wave {
+                    time: 0.0,
+                    zombies: vec![ZombieKind::Basic],
+                }],
+                ..empty_level()
+            },
+            7,
+        );
+        place_zombie(&mut sim, 0, 500.0);
+        sim.step(DT);
+        let spawned = sim.zombies.last().expect("la oleada salió");
+        assert_ne!(spawned.row, 0, "prefiere un carril libre");
+    }
+
+    #[test]
+    fn una_oleada_de_cinco_usa_los_cinco_carriles() {
+        let mut sim = Sim::new(
+            Level {
+                waves: vec![Wave {
+                    time: 0.0,
+                    zombies: vec![ZombieKind::Basic; ROWS],
+                }],
+                ..empty_level()
+            },
+            7,
+        );
+        sim.step(DT);
+        let mut rows: Vec<usize> = sim.zombies.iter().map(|z| z.row).collect();
+        rows.sort_unstable();
+        rows.dedup();
+        assert_eq!(rows.len(), ROWS);
     }
 
     #[test]

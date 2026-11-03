@@ -106,6 +106,10 @@ fn main() {
     let cherrybomb_data = load_plant(&catalog, "CherryBomb");
     let chomper_data = load_plant(&catalog, "Chomper");
     let sun_data = load_reanim_or_exit("Sun", &reanim_path(&catalog, "Sun", "Sun"));
+    let mower_data = load_reanim_or_exit(
+        "LawnMower",
+        &reanim_path(&catalog, "LawnMower", "LawnMower"),
+    );
 
     let mut app = App::new();
     app.add_plugins(
@@ -132,6 +136,7 @@ fn main() {
         cherrybomb: cherrybomb_data,
         chomper: chomper_data,
         sun: sun_data,
+        mower: mower_data,
     })
     .insert_resource(GameCatalog(catalog))
     .insert_resource(LevelProgress::load())
