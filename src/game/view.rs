@@ -584,6 +584,7 @@ fn simulate(
         if sim.0.outcome == Outcome::Won {
             let selected = progress.selected;
             progress.clear(selected);
+            progress.save();
         }
         spawn_banner(
             &mut commands,

@@ -198,6 +198,7 @@ pub fn level_select_interaction(
             Interaction::Pressed => {
                 if unlocked {
                     progress.selected = index;
+                    progress.save();
                     next_state.set(AppState::Play);
                 } else if let Ok(mut text) = notice.get_single_mut() {
                     text.0 = format!(

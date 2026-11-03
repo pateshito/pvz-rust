@@ -134,7 +134,7 @@ fn main() {
         sun: sun_data,
     })
     .insert_resource(GameCatalog(catalog))
-    .insert_resource(LevelProgress::default())
+    .insert_resource(LevelProgress::load())
     .insert_resource(PlantLoadout::default())
     .insert_resource(viewer::ReanimCache::default())
     // Tras calcular los `GlobalTransform` y antes de decidir qué se ve.

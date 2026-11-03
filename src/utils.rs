@@ -20,13 +20,11 @@ pub fn image_to_path(internal: &str, entity: &str) -> Option<String> {
     paths::resolve_image(internal, entity)
 }
 
-/// Carpeta `assets/`, resuelta en tiempo de ejecución con la misma lógica que usa
-/// Bevy: `BEVY_ASSET_ROOT`, luego `CARGO_MANIFEST_DIR` (con `cargo run`) y, por
-/// último, la carpeta del ejecutable. Así el binario sigue funcionando si se mueve.
-pub fn assets_dir() -> &'static Path {
-    static ASSETS_DIR: OnceLock<PathBuf> = OnceLock::new();
-    ASSETS_DIR.get_or_init(|| {
-        let base = if let Ok(root) = std::env::var("BEVY_ASSET_ROOT") {
+/// Raíz del proyecto, resuelta como `assets_dir`.
+fn project_dir() -> &'static Path {
+    static PROJECT_DIR: OnceLock<PathBuf> = OnceLock::new();
+    PROJECT_DIR.get_or_init(|| {
+        if let Ok(root) = std::env::var("BEVY_ASSET_ROOT") {
             PathBuf::from(root)
         } else if let Ok(manifest) = std::env::var("CARGO_MANIFEST_DIR") {
             PathBuf::from(manifest)
@@ -35,9 +33,21 @@ pub fn assets_dir() -> &'static Path {
                 .ok()
                 .and_then(|exe| exe.parent().map(Path::to_path_buf))
                 .unwrap_or_else(|| PathBuf::from("."))
-        };
-        base.join("assets")
+        }
     })
+}
+
+/// Carpeta `assets/`, resuelta en tiempo de ejecución con la misma lógica que usa
+/// Bevy: `BEVY_ASSET_ROOT`, luego `CARGO_MANIFEST_DIR` (con `cargo run`) y, por
+/// último, la carpeta del ejecutable. Así el binario sigue funcionando si se mueve.
+pub fn assets_dir() -> &'static Path {
+    static ASSETS_DIR: OnceLock<PathBuf> = OnceLock::new();
+    ASSETS_DIR.get_or_init(|| project_dir().join("assets"))
+}
+
+/// Carpeta `saves/` en la raíz del proyecto. Borrarla reinicia el progreso.
+pub fn saves_dir() -> PathBuf {
+    project_dir().join("saves")
 }
 
 pub fn asset_exists(rel: &str) -> bool {

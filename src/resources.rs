@@ -4,6 +4,8 @@ use crate::game::level::LEVEL_COUNT;
 use crate::reanim::ReanimData;
 use crate::Character;
 use bevy::prelude::*;
+use serde::{Deserialize, Serialize};
+use std::path::Path;
 
 /// Catálogo de entidades descubierto al arrancar. Lo usa el modo test.
 #[derive(Resource)]
@@ -47,13 +49,58 @@ impl CharacterLibraries {
 
 /// Progreso de la campaña. `cleared` cuenta los niveles superados desde el
 /// primero; el nivel `cleared` es el siguiente desbloqueado.
-#[derive(Resource, Debug, Clone, Default)]
+#[derive(Resource, Debug, Clone, Default, Serialize, Deserialize)]
 pub struct LevelProgress {
     pub cleared: usize,
     pub selected: usize,
 }
 
 impl LevelProgress {
+    const FILE: &'static str = "progress.json";
+
+    /// Lee el progreso de `saves/progress.json`. Si no existe o está roto,
+    /// empieza desde cero.
+    pub fn load() -> Self {
+        let path = crate::utils::saves_dir().join(Self::FILE);
+        let mut progress = match Self::load_from(&path) {
+            Ok(progress) => {
+                println!("💾 Progreso cargado de {:?}", path);
+                progress
+            }
+            Err(e) => {
+                println!("💾 Sin progreso guardado ({}). Se empieza desde cero.", e);
+                Self::default()
+            }
+        };
+        progress.cleared = progress.cleared.min(LEVEL_COUNT);
+        progress.selected = progress.selected.min(LEVEL_COUNT.saturating_sub(1));
+        progress
+    }
+
+    fn load_from(path: &Path) -> Result<Self, String> {
+        let text = std::fs::read_to_string(path).map_err(|e| e.to_string())?;
+        serde_json::from_str(&text).map_err(|e| e.to_string())
+    }
+
+    /// Escribe el progreso en `saves/progress.json`, creando la carpeta si
+    /// hace falta. Un fallo solo avisa: no debe cortar la partida.
+    pub fn save(&self) {
+        let dir = crate::utils::saves_dir();
+        if let Err(e) = std::fs::create_dir_all(&dir) {
+            eprintln!("⚠️ No se pudo crear {:?}: {}", dir, e);
+            return;
+        }
+        let path = dir.join(Self::FILE);
+        match serde_json::to_string_pretty(self) {
+            Ok(text) => {
+                if let Err(e) = std::fs::write(&path, text) {
+                    eprintln!("⚠️ No se pudo guardar el progreso en {:?}: {}", path, e);
+                }
+            }
+            Err(e) => eprintln!("⚠️ No se pudo serializar el progreso: {}", e),
+        }
+    }
+
     pub fn is_unlocked(&self, index: usize) -> bool {
         index < LEVEL_COUNT && index <= self.cleared
     }
