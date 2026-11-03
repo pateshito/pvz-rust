@@ -415,7 +415,10 @@ mod tests {
             let reference = cactus_base_x(&data, track, frames(idle).start);
             for f in frames(anim) {
                 let d = (cactus_base_x(&data, track, f) - reference).abs();
-                assert!(d <= max, "{track} en {anim}, frame {f}: la base se mueve {d:.1} px (máx {max})");
+                assert!(
+                    d <= max,
+                    "{track} en {anim}, frame {f}: la base se mueve {d:.1} px (máx {max})"
+                );
             }
         };
         check("anim_face", "anim_shooting", "anim_idle", 3.0);

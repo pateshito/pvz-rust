@@ -27,6 +27,12 @@ use crate::AppState;
 
 /// El `.reanim` del lanzaguisantes ocupa unos 6..62 en x y 10..63 en y (y hacia
 /// abajo). Con esto el cuerpo queda dentro de la celda y las hojas, abajo.
+const BANK_W: f32 = 446.0;
+const BANK_H: f32 = 87.0;
+const PACKET_X: f32 = 83.0;
+const PACKET_Y: f32 = 8.0;
+const PACKET_W: f32 = 50.0;
+const PACKET_H: f32 = 70.0;
 const PLANT_DX: f32 = 10.0;
 const PLANT_DY: f32 = 26.0;
 /// Los pies de `anim_walk` están cerca de y = 115. Así quedan justo sobre el
@@ -53,6 +59,9 @@ struct HoverCell;
 
 #[derive(Component)]
 struct StatusText;
+
+#[derive(Component)]
+struct SunText;
 
 #[derive(Component)]
 struct SeedCard;
@@ -149,55 +158,95 @@ fn setup(mut commands: Commands, asset_server: Res<AssetServer>) {
         PlayPiece,
     ));
 
+    // Banco de semillas: la imagen del juego con el contador de soles a la
+    // izquierda y el sobre del lanzaguisantes encima.
     commands
         .spawn((
             Node {
                 position_type: PositionType::Absolute,
-                left: Val::Px(0.0),
-                top: Val::Px(0.0),
-                width: Val::Percent(100.0),
-                height: Val::Px(72.0),
-                padding: UiRect::all(Val::Px(8.0)),
-                column_gap: Val::Px(8.0),
-                align_items: AlignItems::Center,
+                left: Val::Px(8.0),
+                top: Val::Px(4.0),
+                width: Val::Px(BANK_W),
+                height: Val::Px(BANK_H),
                 ..default()
             },
-            BackgroundColor(Color::srgba(0.05, 0.07, 0.04, 0.72)),
+            ImageNode::new(asset_server.load("images/SeedBank.png")),
             PlayPiece,
         ))
-        .with_children(|parent| {
-            parent.spawn((
-                Text::new(""),
-                TextFont::from_font_size(16.0),
-                TextColor(Color::srgb(0.95, 0.95, 0.85)),
+        .with_children(|bank| {
+            bank.spawn((
                 Node {
-                    flex_grow: 1.0,
+                    position_type: PositionType::Absolute,
+                    left: Val::Px(0.0),
+                    top: Val::Px(64.0),
+                    width: Val::Px(78.0),
+                    justify_content: JustifyContent::Center,
                     ..default()
                 },
-                StatusText,
+                Text::new("50"),
+                TextFont::from_font_size(17.0),
+                TextColor(Color::srgb(0.1, 0.07, 0.02)),
+                TextLayout::new_with_justify(JustifyText::Center),
+                SunText,
             ));
-            parent
-                .spawn((
+            bank.spawn((
+                Node {
+                    position_type: PositionType::Absolute,
+                    left: Val::Px(PACKET_X),
+                    top: Val::Px(PACKET_Y),
+                    width: Val::Px(PACKET_W),
+                    height: Val::Px(PACKET_H),
+                    justify_content: JustifyContent::Center,
+                    ..default()
+                },
+                ImageNode::new(asset_server.load("images/SeedPacket_Larger.png")),
+                SeedCard,
+            ))
+            .with_children(|packet| {
+                packet.spawn((
                     Node {
-                        width: Val::Px(210.0),
-                        height: Val::Px(46.0),
-                        justify_content: JustifyContent::Center,
-                        align_items: AlignItems::Center,
-                        border: UiRect::all(Val::Px(2.0)),
+                        position_type: PositionType::Absolute,
+                        top: Val::Px(12.0),
+                        width: Val::Px(40.0),
                         ..default()
                     },
-                    BorderColor(Color::srgb(0.45, 0.35, 0.15)),
-                    BackgroundColor(Color::srgb(0.3, 0.5, 0.22)),
-                    SeedCard,
-                ))
-                .with_children(|button| {
-                    button.spawn((
-                        Text::new("Lanzaguisantes"),
-                        TextFont::from_font_size(16.0),
-                        TextColor(Color::srgb(0.12, 0.08, 0.04)),
-                        SeedLabel,
-                    ));
-                });
+                    ImageNode::new(asset_server.load("textures/PeaShooter/PeaShooter_Head.png")),
+                ));
+                packet.spawn((
+                    Node {
+                        position_type: PositionType::Absolute,
+                        bottom: Val::Px(2.0),
+                        ..default()
+                    },
+                    Text::new("100"),
+                    TextFont::from_font_size(13.0),
+                    TextColor(Color::srgb(0.1, 0.07, 0.02)),
+                    SeedLabel,
+                ));
+            });
+        });
+
+    // Panel de información, a la derecha del banco.
+    commands
+        .spawn((
+            Node {
+                position_type: PositionType::Absolute,
+                left: Val::Px(BANK_W + 24.0),
+                top: Val::Px(8.0),
+                padding: UiRect::axes(Val::Px(12.0), Val::Px(6.0)),
+                ..default()
+            },
+            BackgroundColor(Color::srgba(0.12, 0.08, 0.03, 0.78)),
+            BorderRadius::all(Val::Px(8.0)),
+            PlayPiece,
+        ))
+        .with_children(|panel| {
+            panel.spawn((
+                Text::new(""),
+                TextFont::from_font_size(14.0),
+                TextColor(Color::srgb(0.96, 0.92, 0.75)),
+                StatusText,
+            ));
         });
 
     commands.insert_resource(Match(Sim::new(Level::test_level(), fresh_seed(0.0))));
@@ -284,8 +333,9 @@ fn simulate(
     mut hover: Query<(&mut Transform, &mut Sprite, &mut Visibility), With<HoverCell>>,
     windows: Query<&Window, With<PrimaryWindow>>,
     mut status: Query<&mut Text, With<StatusText>>,
-    mut seed_label: Query<&mut Text, (With<SeedLabel>, Without<StatusText>)>,
-    mut seed_color: Query<&mut BackgroundColor, With<SeedCard>>,
+    mut seed_label: Query<&mut Text, (With<SeedLabel>, Without<StatusText>, Without<SunText>)>,
+    mut sun_text: Query<&mut Text, (With<SunText>, Without<StatusText>, Without<SeedLabel>)>,
+    mut seed_color: Query<&mut ImageNode, With<SeedCard>>,
 ) {
     if control.restart {
         actors.despawn_all(&mut commands);
@@ -333,6 +383,7 @@ fn simulate(
         time.elapsed_secs(),
         &mut status,
         &mut seed_label,
+        &mut sun_text,
         &mut seed_color,
     );
 }
@@ -703,8 +754,9 @@ fn paint_hud(
     control: &PlayControl,
     now: f32,
     status: &mut Query<&mut Text, With<StatusText>>,
-    seed_label: &mut Query<&mut Text, (With<SeedLabel>, Without<StatusText>)>,
-    seed_color: &mut Query<&mut BackgroundColor, With<SeedCard>>,
+    seed_label: &mut Query<&mut Text, (With<SeedLabel>, Without<StatusText>, Without<SunText>)>,
+    sun_text: &mut Query<&mut Text, (With<SunText>, Without<StatusText>, Without<SeedLabel>)>,
+    seed_color: &mut Query<&mut ImageNode, With<SeedCard>>,
 ) {
     let waves = sim.level.waves.len();
     let started = sim
@@ -738,8 +790,7 @@ fn paint_hud(
         String::new()
     };
     let line = format!(
-        "☀ {}    {wave_text}    zombies {}/{}{flag}\nP: pausa    R: reiniciar    Esc: menú{notice}",
-        sim.sun,
+        "{wave_text}    zombies {}/{}{flag}\nP: pausa    R: reiniciar    Esc: menú{notice}",
         sim.killed,
         sim.level.total_zombies(),
     );
@@ -747,30 +798,28 @@ fn paint_hud(
         text.0 = line.clone();
     }
 
+    for mut text in sun_text.iter_mut() {
+        text.0 = sim.sun.to_string();
+    }
+
     let cost = plant_def(PlantKind::PeaShooter).cost;
-    let (label, color) = match sim.seed_status(0) {
-        SeedStatus::Ready => (
-            format!("Lanzaguisantes  {cost}"),
-            Color::srgb(0.32, 0.58, 0.24),
-        ),
+    let (label, tint) = match sim.seed_status(0) {
+        SeedStatus::Ready => (cost.to_string(), Color::WHITE),
         SeedStatus::Cooldown => {
             let left = sim
                 .seeds
                 .first()
                 .map(|seed| seed.cooldown_left)
                 .unwrap_or(0.0);
-            (format!("Recarga  {left:.1}s"), Color::srgb(0.32, 0.32, 0.3))
+            (format!("{left:.0}s"), Color::srgb(0.45, 0.45, 0.45))
         }
-        SeedStatus::NoSun => (
-            format!("Faltan soles  {cost}"),
-            Color::srgb(0.45, 0.3, 0.16),
-        ),
+        SeedStatus::NoSun => (cost.to_string(), Color::srgb(0.7, 0.55, 0.5)),
     };
     for mut text in seed_label.iter_mut() {
         text.0 = label.clone();
     }
-    for mut background in seed_color.iter_mut() {
-        *background = BackgroundColor(color);
+    for mut image in seed_color.iter_mut() {
+        image.color = tint;
     }
 }
 

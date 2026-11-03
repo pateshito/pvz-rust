@@ -6,7 +6,7 @@ edition = "2021"
 [dependencies]
 regex = "1.10" # Para parsear el .reanim rápidamente
 # Motor principal - usa la última versión estable
-bevy = "0.15"
+bevy = { version = "0.15", features = ["jpeg"] } # jpeg: los fondos del césped son .jpg
 
 # Generación de números aleatorios (para spawneo de zombies)
 rand = "0.8"
