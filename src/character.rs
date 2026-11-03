@@ -2,7 +2,7 @@
 //! personaje a partir de su `.reanim` y colocarlas según el frame actual.
 
 use crate::components::CharacterPart;
-use crate::reanim::{AnimState, ReanimData};
+use crate::reanim::{AnimState, Overlay, ReanimData};
 use crate::resources::CharacterLibraries;
 use crate::utils::{asset_exists, entity_name, image_to_path};
 use crate::zombie_style::PlainStyle;
@@ -229,6 +229,8 @@ pub fn apply_part_shear(
 
 /// Coloca una pieza según el frame `local` (0..len) del estado `anim`.
 /// El cuerpo y la cabeza leen frames de sitios distintos (ver `AnimState`).
+/// `blink` es el parpadeo en curso, si toca: el cuerpo sigue en el reposo y
+/// el párpado se dibuja encima.
 pub fn pose_part(
     data: &ReanimData,
     anim: &AnimState,
@@ -240,6 +242,7 @@ pub fn pose_part(
     sprite: &mut Sprite,
     vis: &mut Visibility,
     part: &mut CharacterPart,
+    blink: Option<(usize, usize)>,
 ) {
     let track = &data.tracks[part.track];
     // El zombi normal lleva cono, cubo, puerta y demás en el mismo archivo.
@@ -251,7 +254,21 @@ pub fn pose_part(
         }
     }
     let is_prop = track.name.starts_with("anim_");
-    let (frame, dx) = anim.sample(track.group, local);
+    let on = |ti: usize, frame: usize| {
+        data.tracks
+            .get(ti)
+            .and_then(|t| t.frames.get(frame))
+            .and_then(|r| r.as_ref())
+            .is_some_and(|r| r.active)
+    };
+    let (frame, dx) = match anim.overlay(part.track, blink, on) {
+        Some(Overlay::Hidden) => {
+            *vis = Visibility::Hidden;
+            return;
+        }
+        Some(Overlay::Sample(frame)) => (frame, 0.0),
+        None => anim.sample(track.group, local),
+    };
 
     match track.frames.get(frame).and_then(|r| r.as_ref()) {
         Some(r) => {
@@ -315,6 +332,7 @@ pub fn animate_characters(
         let index = animator.state % data.states.len();
         let local = animator.local_frame(data);
         let state = &data.states[index];
+        let blink = state.blink_at(animator.time, data.fps, 0.0);
         let entity = entity_name(animator.character);
         // La partida, cuando dibuje, usa el zombi normal sin accesorios mezclados.
         let style = match animator.character {
@@ -335,6 +353,7 @@ pub fn animate_characters(
                 &mut sprite,
                 &mut vis,
                 &mut part,
+                blink,
             );
         }
     }

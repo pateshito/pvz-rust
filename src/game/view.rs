@@ -20,7 +20,7 @@ use crate::game::sim::{
     Id, Outcome, PlantError, SeedStatus, Sim, SimEvent, ZombieStatus, PEA_WIDTH, PEA_Y_OFFSET,
 };
 use crate::peashooter::{state_index, STATE_IDLE, STATE_SHOOTING};
-use crate::reanim::ReanimData;
+use crate::reanim::{ReanimData, BLINK_PERIOD};
 use crate::resources::CharacterLibraries;
 use crate::zombie_style::PlainStyle;
 use crate::AppState;
@@ -465,6 +465,7 @@ fn animate(
         root.translation.z = plant.row as f32;
         let data = libraries.plant(plant.kind);
         let (index, local) = plant_frame(data, plant, control.clock);
+        let phase = (plant.row as f32 * 1.7 + plant.col as f32 * 0.9) % BLINK_PERIOD;
         pose_children(
             &mut parts,
             children,
@@ -474,6 +475,8 @@ fn animate(
             plant_def(plant.kind).entity,
             None,
             &asset_server,
+            control.clock,
+            phase,
         );
     }
 
@@ -496,6 +499,8 @@ fn animate(
             "Zombie",
             Some(PlainStyle::Normal),
             &asset_server,
+            control.clock,
+            0.0,
         );
     }
 
@@ -527,6 +532,8 @@ fn animate(
                 "Sun",
                 None,
                 &asset_server,
+                control.clock,
+                0.0,
             );
         }
     }
@@ -673,10 +680,13 @@ fn pose_children(
     entity: &str,
     style: Option<PlainStyle>,
     asset_server: &AssetServer,
+    time: f32,
+    phase: f32,
 ) {
     let Some(state) = data.states.get(index) else {
         return;
     };
+    let blink = state.blink_at(time, data.fps, phase);
     let mut iter = parts.iter_many_mut(children);
     while let Some((mut xf, mut sprite, mut vis, mut part)) = iter.fetch_next() {
         if part.track >= data.tracks.len() {
@@ -694,6 +704,7 @@ fn pose_children(
             &mut sprite,
             &mut vis,
             &mut part,
+            blink,
         );
     }
 }

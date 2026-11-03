@@ -610,6 +610,7 @@ pub fn play_animation(
 
     let anim = &data.states[state.current % data.states.len()];
     let local = (state.time * data.fps) as usize % anim.len.max(1);
+    let blink = anim.blink_at(state.time, data.fps, 0.0);
     let style = if state.plain {
         Some(PlainStyle::ALL[state.style % PlainStyle::ALL.len()])
     } else {
@@ -632,6 +633,7 @@ pub fn play_animation(
             &mut sprite,
             &mut vis,
             &mut part,
+            blink,
         );
     }
 

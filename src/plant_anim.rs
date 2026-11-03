@@ -14,7 +14,7 @@
 //! - ThreePeater: `idle` y `shooting`. En el disparo las tres cabezas salen
 //!   juntas (13 frames) y el tallo de 25 se repite.
 
-use crate::reanim::{AnimState, GroupSample, PartGroup, ReanimData, Track};
+use crate::reanim::{fold_blinks, AnimState, GroupSample, PartGroup, ReanimData, Track};
 
 const IDLE: &str = "idle";
 const SHOOTING: &str = "shooting";
@@ -26,13 +26,18 @@ pub fn apply(entity: &str, reanim: &str, data: &mut ReanimData) -> Result<(), St
     if entity != reanim {
         return Ok(());
     }
-    match entity {
+    let result = match entity {
         "PeaShooter" | "SnowPea" => compose_standard(data, entity, &["anim_stem"]),
         "GatlingPea" => compose_standard(data, entity, &["anim_stem", "stalk_top"]),
         "SplitPea" => compose_split(data),
         "ThreePeater" => compose_triple(data),
         _ => Ok(()),
+    };
+    // Componer reemplaza los estados y se lleva el parpadeo que armó el parser.
+    if result.is_ok() {
+        fold_blinks(data);
     }
+    result
 }
 
 /// `idle` + `shooting` para un tirador de una cabeza.
@@ -372,6 +377,7 @@ fn plant_state(
         head_cycle,
         head_dx,
         groups,
+        blinks: Vec::new(),
     }
 }
 
@@ -415,6 +421,31 @@ mod tests {
 
     fn names(data: &ReanimData) -> Vec<&str> {
         data.states.iter().map(|s| s.name.as_str()).collect()
+    }
+
+    #[test]
+    fn el_lanzaguisantes_parpadea_en_reposo_y_no_al_disparar() {
+        let data = composed("PeaShooter", "animations/PeaShooter/PeaShooter.reanim");
+        assert_eq!(names(&data), ["idle", "shooting"]);
+        assert!(data.states.iter().all(|s| s.len == 25));
+        assert!(!data.states[0].blinks.is_empty(), "el reposo parpadea");
+        assert!(
+            data.states[1].blinks.is_empty(),
+            "el disparo ya incluye su parpadeo"
+        );
+        let clip = &data.states[0].blinks[0];
+        assert_eq!(clip.start, 1);
+        assert!(clip.len <= 4);
+    }
+
+    #[test]
+    fn el_triple_parpadea_cada_cabeza_sobre_el_reposo() {
+        let data = composed("ThreePeater", "animations/ThreePeater/ThreePeater.reanim");
+        assert_eq!(names(&data), ["idle", "shooting"]);
+        assert_eq!(data.states[0].len, 25);
+        assert_eq!(data.states[1].len, 13);
+        assert!(data.states[1].blinks.is_empty());
+        assert_eq!(data.states[0].blinks.len(), 3, "una por cabeza");
     }
 
     #[test]
