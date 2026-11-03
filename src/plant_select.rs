@@ -25,13 +25,9 @@ const ICON_INSET_X: f32 = 5.0;
 const ICON_TOP: f32 = 4.0;
 const ICON_BOTTOM: f32 = 16.0;
 
-const CARD_W: f32 = 145.0;
-const CARD_H: f32 = 235.0;
-const CARD_GAP: f32 = 14.0;
-const CARD_TOP: f32 = 205.0;
-const ICON_CARD_TOP: f32 = 14.0;
-const ICON_CARD_BOTTOM: f32 = 154.0;
-const ICON_CARD_INSET: f32 = 16.0;
+const CARD_TOP: f32 = 198.0;
+const CARD_GAP: f32 = 22.0;
+const CARD_LABEL_TOP: f32 = CARD_TOP + PACKET_H + 6.0;
 
 #[derive(Component)]
 pub(crate) struct PlantSelectEntity;
@@ -122,7 +118,7 @@ fn spawn_screen(
         .with_children(|root| {
             spawn_bank(root, asset_server, loadout);
             spawn_header(root, unlocked, loadout);
-            spawn_available_cards(root, &available);
+            spawn_available_cards(root, asset_server, &available);
             spawn_footer(root, available.is_empty());
         });
 
@@ -145,19 +141,13 @@ fn spawn_screen(
         ));
     }
 
-    // Modelos de las plantas no elegidas, dentro de su tarjeta.
-    let start_x = (800.0
-        - (available.len() as f32 * CARD_W
-            + (available.len().saturating_sub(1)) as f32 * CARD_GAP))
-        * 0.5;
+    // Modelos de las plantas no elegidas, dentro de un sobre del tamaño del HUD.
+    let total =
+        available.len() as f32 * PACKET_W + available.len().saturating_sub(1) as f32 * CARD_GAP;
+    let start_x = (800.0 - total) * 0.5;
     for (index, kind) in available.into_iter().enumerate() {
-        let x = start_x + index as f32 * (CARD_W + CARD_GAP);
-        let target = (
-            x + ICON_CARD_INSET,
-            CARD_TOP + ICON_CARD_TOP,
-            x + CARD_W - ICON_CARD_INSET,
-            CARD_TOP + ICON_CARD_BOTTOM,
-        );
+        let x = start_x + index as f32 * (PACKET_W + CARD_GAP);
+        let target = packet_icon_box(x, CARD_TOP);
         let entity = view::spawn_plant_icon(commands, asset_server, libraries, kind, target, 20.0);
         commands.entity(entity).insert((
             PlantSelectEntity,
@@ -261,7 +251,11 @@ fn spawn_header(root: &mut ChildBuilder, unlocked: usize, loadout: &PlantLoadout
     ));
 }
 
-fn spawn_available_cards(root: &mut ChildBuilder, available: &[PlantKind]) {
+fn spawn_available_cards(
+    root: &mut ChildBuilder,
+    asset_server: &AssetServer,
+    available: &[PlantKind],
+) {
     if available.is_empty() {
         root.spawn((
             Text::new("Todas las plantas están equipadas."),
@@ -281,11 +275,11 @@ fn spawn_available_cards(root: &mut ChildBuilder, available: &[PlantKind]) {
     }
 
     let total =
-        available.len() as f32 * CARD_W + (available.len().saturating_sub(1)) as f32 * CARD_GAP;
+        available.len() as f32 * PACKET_W + available.len().saturating_sub(1) as f32 * CARD_GAP;
     let start_x = (800.0 - total) * 0.5;
 
     for (index, &kind) in available.iter().enumerate() {
-        let x = start_x + index as f32 * (CARD_W + CARD_GAP);
+        let x = start_x + index as f32 * (PACKET_W + CARD_GAP);
         let def = plant_def(kind);
         root.spawn((
             Button,
@@ -293,34 +287,30 @@ fn spawn_available_cards(root: &mut ChildBuilder, available: &[PlantKind]) {
                 position_type: PositionType::Absolute,
                 left: Val::Px(x),
                 top: Val::Px(CARD_TOP),
-                width: Val::Px(CARD_W),
-                height: Val::Px(CARD_H),
-                flex_direction: FlexDirection::Column,
-                align_items: AlignItems::Center,
-                justify_content: JustifyContent::FlexEnd,
-                padding: UiRect::bottom(Val::Px(12.0)),
-                row_gap: Val::Px(4.0),
-                border: UiRect::all(Val::Px(3.0)),
+                width: Val::Px(PACKET_W),
+                height: Val::Px(PACKET_H),
+                border: UiRect::all(Val::Px(2.0)),
                 ..default()
             },
+            ImageNode::new(asset_server.load("images/SeedPacket_Larger.png")),
             BorderColor(Color::srgb(0.28, 0.52, 0.25)),
-            BackgroundColor(Color::srgba(0.12, 0.24, 0.12, 0.82)),
             PlantCard(kind),
-        ))
-        .with_children(|card| {
-            card.spawn((
-                Text::new(def.name),
-                TextFont::from_font_size(14.0),
-                TextColor(Color::WHITE),
-                TextLayout::new_with_justify(JustifyText::Center),
-            ));
-            card.spawn((
-                Text::new("Disponible"),
-                TextFont::from_font_size(12.0),
-                TextColor(Color::srgb(0.98, 0.95, 0.75)),
-                PlantStatusText(kind),
-            ));
-        });
+        ));
+        root.spawn((
+            Text::new(format!("{}\nDisponible", def.name)),
+            Node {
+                position_type: PositionType::Absolute,
+                left: Val::Px(x - 12.0),
+                top: Val::Px(CARD_LABEL_TOP),
+                width: Val::Px(PACKET_W + 24.0),
+                justify_content: JustifyContent::Center,
+                ..default()
+            },
+            TextFont::from_font_size(10.0),
+            TextColor(Color::WHITE),
+            TextLayout::new_with_justify(JustifyText::Center),
+            PlantStatusText(kind),
+        ));
     }
 }
 
@@ -358,6 +348,17 @@ fn spawn_footer(root: &mut ChildBuilder, all_equipped: bool) {
         TextColor(Color::srgb(0.75, 0.80, 0.70)),
         TextLayout::new_with_justify(JustifyText::Center),
     ));
+}
+
+fn packet_icon_box(x: f32, top: f32) -> (f32, f32, f32, f32) {
+    let min_x = x + ICON_INSET_X;
+    let min_y = top + ICON_TOP;
+    (
+        min_x,
+        min_y,
+        x + PACKET_W - ICON_INSET_X,
+        top + PACKET_H - ICON_BOTTOM,
+    )
 }
 
 fn hud_icon_box(slot: usize) -> (f32, f32, f32, f32) {
@@ -458,28 +459,20 @@ pub fn plant_select_interaction(
 
 pub fn paint_cards(
     progress: Res<LevelProgress>,
-    mut cards: Query<
-        (
-            &PlantCard,
-            &Interaction,
-            &mut BackgroundColor,
-            &mut BorderColor,
-        ),
-        With<Button>,
-    >,
+    mut cards: Query<(&PlantCard, &Interaction, &mut ImageNode, &mut BorderColor), With<Button>>,
     mut statuses: Query<(&PlantStatusText, &mut Text)>,
 ) {
-    for (card, interaction, mut background, mut border) in &mut cards {
+    for (card, interaction, mut image, mut border) in &mut cards {
         let kind = card.0;
         let unlocked = progress.plant_unlocked(kind);
         let hovered = *interaction == Interaction::Hovered;
-        *background = BackgroundColor(if !unlocked {
-            Color::srgba(0.10, 0.11, 0.10, 0.86)
+        image.color = if !unlocked {
+            Color::srgba(0.30, 0.30, 0.30, 0.75)
         } else if hovered {
-            Color::srgba(0.18, 0.38, 0.18, 0.92)
+            Color::srgb(1.0, 1.0, 0.80)
         } else {
-            Color::srgba(0.12, 0.24, 0.12, 0.82)
-        });
+            Color::WHITE
+        };
         *border = BorderColor(if unlocked {
             Color::srgb(0.34, 0.62, 0.30)
         } else {
@@ -489,11 +482,15 @@ pub fn paint_cards(
 
     for (status_text, mut text) in &mut statuses {
         let kind = status_text.0;
-        text.0 = if progress.plant_unlocked(kind) {
-            "Disponible".into()
-        } else {
-            "Bloqueada".into()
-        };
+        text.0 = format!(
+            "{}\n{}",
+            plant_def(kind).name,
+            if progress.plant_unlocked(kind) {
+                "Disponible"
+            } else {
+                "Bloqueada"
+            }
+        );
     }
 }
 
