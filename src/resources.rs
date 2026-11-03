@@ -1,4 +1,5 @@
 use crate::assets::catalog::EntityCatalog;
+use crate::game::defs::PlantKind;
 use crate::reanim::ReanimData;
 use crate::Character;
 use bevy::prelude::*;
@@ -11,6 +12,11 @@ pub struct GameCatalog(pub EntityCatalog);
 pub struct CharacterLibraries {
     pub zombie: ReanimData,
     pub peashooter: ReanimData,
+    pub snowpea: ReanimData,
+    pub sunflower: ReanimData,
+    pub wallnut: ReanimData,
+    pub potatomine: ReanimData,
+    pub sun: ReanimData,
 }
 
 impl CharacterLibraries {
@@ -18,6 +24,16 @@ impl CharacterLibraries {
         match character {
             Character::Zombie => &self.zombie,
             Character::PeaShooter => &self.peashooter,
+        }
+    }
+
+    pub fn plant(&self, kind: PlantKind) -> &ReanimData {
+        match kind {
+            PlantKind::PeaShooter => &self.peashooter,
+            PlantKind::SnowPea => &self.snowpea,
+            PlantKind::Sunflower => &self.sunflower,
+            PlantKind::Wallnut => &self.wallnut,
+            PlantKind::PotatoMine => &self.potatomine,
         }
     }
 }

@@ -3,7 +3,11 @@
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum PlantKind {
+    Sunflower,
     PeaShooter,
+    SnowPea,
+    Wallnut,
+    PotatoMine,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -21,6 +25,28 @@ pub struct ShooterDef {
     pub damage: f32,
     /// Píxeles por segundo.
     pub pea_speed: f32,
+    /// Segundos que el impacto deja al zombie a media velocidad. 0 = guisante normal.
+    pub chill: f32,
+    /// Imagen del proyectil, relativa a `assets/`.
+    pub projectile: &'static str,
+}
+
+/// Planta que suelta soles.
+#[derive(Clone, Copy, Debug)]
+pub struct ProducerDef {
+    /// Segundos hasta el primer sol.
+    pub first: f32,
+    /// Segundos entre soles, a partir del segundo.
+    pub interval: f32,
+    pub value: u32,
+}
+
+/// Papa mina: los zombies la pisan sin comerla y, al armarse, revienta al primero.
+#[derive(Clone, Copy, Debug)]
+pub struct MineDef {
+    /// Segundos bajo tierra antes de armarse.
+    pub arm_time: f32,
+    pub damage: f32,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -31,7 +57,13 @@ pub struct PlantDef {
     /// Segundos hasta poder volver a elegir la semilla.
     pub cooldown: f32,
     pub max_hp: f32,
+    /// Carpeta del `.reanim` y de las texturas.
+    pub entity: &'static str,
+    /// Icono del sobre, relativo a `assets/`.
+    pub icon: &'static str,
     pub shooter: Option<ShooterDef>,
+    pub producer: Option<ProducerDef>,
+    pub mine: Option<MineDef>,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -53,20 +85,92 @@ pub struct ZombieDef {
 }
 
 pub fn plant_def(kind: PlantKind) -> PlantDef {
-    match kind {
-        PlantKind::PeaShooter => PlantDef {
-            kind,
-            name: "Lanzaguisantes",
-            cost: 100,
-            cooldown: 7.5,
-            max_hp: 300.0,
-            shooter: Some(ShooterDef {
-                interval: 1.425,
-                fire_phase: 0.5,
-                damage: 20.0,
-                pea_speed: 333.0,
+    let (name, cost, cooldown, max_hp, entity, icon, shooter, producer, mine) = match kind {
+        PlantKind::Sunflower => (
+            "Girasol",
+            50,
+            7.5,
+            300.0,
+            "SunFlower",
+            "textures/SunFlower/SunFlower_head.png",
+            None,
+            Some(ProducerDef {
+                first: 7.5,
+                interval: 24.0,
+                value: 25,
             }),
-        },
+            None,
+        ),
+        PlantKind::PeaShooter => (
+            "Lanzaguisantes",
+            100,
+            7.5,
+            300.0,
+            "PeaShooter",
+            "textures/PeaShooter/PeaShooter_Head.png",
+            Some(pea(0.0, "images/ProjectilePea.png")),
+            None,
+            None,
+        ),
+        PlantKind::SnowPea => (
+            "Lanzaguisantes de hielo",
+            175,
+            7.5,
+            300.0,
+            "SnowPea",
+            "textures/SnowPea/SnowPea_head.png",
+            Some(pea(10.0, "images/ProjectileSnowPea.png")),
+            None,
+            None,
+        ),
+        PlantKind::Wallnut => (
+            "Nuez",
+            50,
+            30.0,
+            4000.0,
+            "Wallnut",
+            "textures/Wallnut/Wallnut_body.png",
+            None,
+            None,
+            None,
+        ),
+        PlantKind::PotatoMine => (
+            "Papa mina",
+            25,
+            30.0,
+            300.0,
+            "PotatoMine",
+            "textures/PotatoMine/PotatoMine_body.png",
+            None,
+            None,
+            Some(MineDef {
+                arm_time: 15.0,
+                damage: 1800.0,
+            }),
+        ),
+    };
+    PlantDef {
+        kind,
+        name,
+        cost,
+        cooldown,
+        max_hp,
+        entity,
+        icon,
+        shooter,
+        producer,
+        mine,
+    }
+}
+
+fn pea(chill: f32, projectile: &'static str) -> ShooterDef {
+    ShooterDef {
+        interval: 1.425,
+        fire_phase: 0.5,
+        damage: 20.0,
+        pea_speed: 333.0,
+        chill,
+        projectile,
     }
 }
 

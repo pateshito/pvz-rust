@@ -157,7 +157,7 @@ assets/
 - Ocultar tracks inactivos.
 - Menú → visor o partida → volver, pausa, reinicio, movimiento.
 - Simular una partida completa sin Bevy: plantar, enfriamientos, soles, guisantes, daño, muerte, oleadas y victoria/derrota.
-- Jugar esa partida en el césped de día: clic para plantar, recoger soles, ver al zombi caminar, comer y morir.
+- Jugar esa partida en el césped de día: elegir semilla (1-5), plantar girasol, lanzaguisantes, hielo, nuez o papa mina, recoger soles con rayos, ver al zombi caminar, comer y morir.
 
 **Lo que el código no sabe hacer todavía**
 
@@ -398,7 +398,7 @@ Objetivo de diseño:
 ### Fase 5 — Plantas data-driven (P1)
 
 - [ ] **P0** Definir `PlantDef`: id, nombre, coste, vida, recarga, animación, proyectil, comportamiento.
-- [ ] **P0** Implementar las plantas base: PeaShooter, SunFlower, Wallnut, PotatoMine, CherryBomb, SnowPea, Chomper. El lanzaguisantes ya se planta y dispara en la partida de prueba.
+- [ ] **P0** Implementar las plantas base: PeaShooter, SunFlower, Wallnut, PotatoMine, CherryBomb, SnowPea, Chomper. En la partida de prueba ya funcionan girasol, lanzaguisantes, lanzaguisantes de hielo, nuez y papa mina. Faltan CherryBomb y Chomper.
 - [ ] **P1** Implementar el resto por familias:
   - Tirador: PeaShooter, SnowPea, Repeater/Gatling, SplitPea, Threepeater.
   - Productor: SunFlower, SunShroom, TwinSunflower.
@@ -407,7 +407,7 @@ Objetivo de diseño:
   - Área: FumeShroom, GloomShroom, Melonpult, WinterMelon, Cabbagepult, Cornpult, CobCannon.
   - Control: IceShroom, HypnoShroom, Squash, Tanglekelp, MagnetShroom.
   - Especiales: LilyPad, Flower Pot, CoffeeBean, UmbrellaLeaf, Blover, Plantern, Gravebuster, Marigold, GoldMagnet, Cattail, Spikerock, Torchwood, Imitater, Cactus, SeaShroom, ScaredyShroom, PuffShroom.
-- [ ] **P1** Animaciones por estado: idle, shoot, eat, die, etc. El visor ya une esos estados en PeaShooter, SnowPea, GatlingPea, SplitPea y ThreePeater. La partida sigue animando solo al lanzaguisantes.
+- [ ] **P1** Animaciones por estado: idle, shoot, eat, die, etc. El visor ya une esos estados en PeaShooter, SnowPea, GatlingPea, SplitPea y ThreePeater. La partida anima el reposo y el disparo de los dos lanzaguisantes, el girasol, la nuez y la papa (enterrada, saliendo y armada).
 - [ ] **P1** Coste/recarga y seed packets.
 - [ ] **P2** Almanac con datos y arte.
 

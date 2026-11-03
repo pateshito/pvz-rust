@@ -51,6 +51,16 @@ fn load_reanim_or_exit(label: &str, path: &Path) -> ReanimData {
     }
 }
 
+/// Carga el `.reanim` principal y, si la planta viene partida, une cuerpo y cabeza.
+fn load_plant(catalog: &EntityCatalog, entity: &str) -> ReanimData {
+    let mut data = load_reanim_or_exit(entity, &reanim_path(catalog, entity, entity));
+    if let Err(e) = plant_anim::apply(entity, entity, &mut data) {
+        eprintln!("{e}");
+        std::process::exit(1);
+    }
+    data
+}
+
 fn reanim_path(catalog: &EntityCatalog, entity: &str, name: &str) -> PathBuf {
     catalog
         .entity(entity)
@@ -76,16 +86,13 @@ fn main() {
         catalog.reanim_count()
     );
 
-    let zombie_path = reanim_path(&catalog, "Zombie", "Zombie");
-    let peashooter_path = reanim_path(&catalog, "PeaShooter", "PeaShooter");
-
-    let zombie_data = load_reanim_or_exit("Zombie", &zombie_path);
-    let mut peashooter_data = load_reanim_or_exit("PeaShooter", &peashooter_path);
-    // El PeaShooter solo tiene 2 estados (idle / shooting) con la planta completa.
-    if let Err(e) = peashooter::build_states(&mut peashooter_data) {
-        eprintln!("{e}");
-        std::process::exit(1);
-    }
+    let zombie_data = load_reanim_or_exit("Zombie", &reanim_path(&catalog, "Zombie", "Zombie"));
+    let peashooter_data = load_plant(&catalog, "PeaShooter");
+    let snowpea_data = load_plant(&catalog, "SnowPea");
+    let sunflower_data = load_plant(&catalog, "SunFlower");
+    let wallnut_data = load_plant(&catalog, "Wallnut");
+    let potatomine_data = load_plant(&catalog, "PotatoMine");
+    let sun_data = load_reanim_or_exit("Sun", &reanim_path(&catalog, "Sun", "Sun"));
 
     let mut app = App::new();
     app.add_plugins(
@@ -104,6 +111,11 @@ fn main() {
     .insert_resource(CharacterLibraries {
         zombie: zombie_data,
         peashooter: peashooter_data,
+        snowpea: snowpea_data,
+        sunflower: sunflower_data,
+        wallnut: wallnut_data,
+        potatomine: potatomine_data,
+        sun: sun_data,
     })
     .insert_resource(GameCatalog(catalog))
     .insert_resource(viewer::ReanimCache::default())

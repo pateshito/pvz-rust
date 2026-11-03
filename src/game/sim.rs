@@ -65,6 +65,10 @@ pub struct Plant {
     pub hp: f32,
     /// Avance (0..1) del ciclo de disparo; `None` si no hay a quién disparar.
     pub shoot_phase: Option<f32>,
+    /// Girasol: segundos hasta el próximo sol. Papa mina: segundos bajo tierra.
+    pub timer: f32,
+    /// La papa mina ya puede reventar.
+    pub armed: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -87,12 +91,20 @@ pub struct Zombie {
     pub hp: f32,
     /// Variación individual de velocidad; la animación la usa también.
     pub speed_mul: f32,
+    /// Segundos que le quedan de hielo (media velocidad).
+    pub chill: f32,
     pub status: ZombieStatus,
 }
 
 impl Zombie {
     pub fn is_alive(&self) -> bool {
         self.hp > 0.0 && !matches!(self.status, ZombieStatus::Dying { .. })
+    }
+
+    /// Multiplicador de avance: la variación propia y, si está helado, la mitad.
+    pub fn pace(&self) -> f32 {
+        let slow = if self.chill > 0.0 { 0.5 } else { 1.0 };
+        self.speed_mul * slow
     }
 }
 
@@ -104,6 +116,8 @@ pub struct Pea {
     pub x: f32,
     pub damage: f32,
     pub speed: f32,
+    /// Segundos de hielo que aplica al impactar. 0 es un guisante normal.
+    pub chill_for: f32,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -255,6 +269,8 @@ impl Sim {
             col,
             hp: def.max_hp,
             shoot_phase: None,
+            timer: def.producer.map(|p| p.first).unwrap_or(0.0),
+            armed: false,
         });
         self.grid[row][col] = Some(id);
         self.events.push(SimEvent::PlantPlaced(id));
@@ -369,6 +385,7 @@ impl Sim {
             x: ZOMBIE_SPAWN_X + self.rng.gen_range(0.0..40.0),
             hp: def.max_hp,
             speed_mul: self.rng.gen_range(0.9..1.1),
+            chill: 0.0,
             status: ZombieStatus::Walking,
         };
         self.zombies.push(zombie);
@@ -377,43 +394,65 @@ impl Sim {
     }
 
     fn update_plants(&mut self, dt: f32) {
-        // (fila, x, daño, velocidad)
-        let mut shots: Vec<(usize, f32, f32, f32)> = Vec::new();
+        // (fila, x, daño, velocidad, segundos de hielo)
+        let mut shots: Vec<(usize, f32, f32, f32, f32)> = Vec::new();
+        let mut produced: Vec<(usize, usize, u32)> = Vec::new();
 
         for i in 0..self.plants.len() {
             let Plant { kind, row, col, .. } = self.plants[i];
-            let Some(shooter) = plant_def(kind).shooter else {
-                continue;
-            };
-            let plant_center = cell_left(col) + CELL_W * 0.5;
-            let has_target = self.zombies.iter().any(|z| {
-                let zd = zombie_def(z.kind);
-                z.row == row
-                    && z.is_alive()
-                    && z.x + zd.hit_left < SCREEN_W
-                    && z.x + zd.hit_right > plant_center
-            });
+            let def = plant_def(kind);
 
-            let plant = &mut self.plants[i];
-            plant.shoot_phase = match (has_target, plant.shoot_phase) {
-                (false, _) => None,
-                (true, None) => Some(0.0),
-                (true, Some(p)) => {
-                    let next = p + dt / shooter.interval;
-                    if p < shooter.fire_phase && next >= shooter.fire_phase {
-                        shots.push((
-                            row,
-                            cell_left(col) + PEA_START_DX,
-                            shooter.damage,
-                            shooter.pea_speed,
-                        ));
+            if let Some(shooter) = def.shooter {
+                let plant_center = cell_left(col) + CELL_W * 0.5;
+                let has_target = self.zombies.iter().any(|z| {
+                    let zd = zombie_def(z.kind);
+                    z.row == row
+                        && z.is_alive()
+                        && z.x + zd.hit_left < SCREEN_W
+                        && z.x + zd.hit_right > plant_center
+                });
+
+                let plant = &mut self.plants[i];
+                plant.shoot_phase = match (has_target, plant.shoot_phase) {
+                    (false, _) => None,
+                    (true, None) => Some(0.0),
+                    (true, Some(p)) => {
+                        let next = p + dt / shooter.interval;
+                        if p < shooter.fire_phase && next >= shooter.fire_phase {
+                            shots.push((
+                                row,
+                                cell_left(col) + PEA_START_DX,
+                                shooter.damage,
+                                shooter.pea_speed,
+                                shooter.chill,
+                            ));
+                        }
+                        Some(if next >= 1.0 { next - 1.0 } else { next })
                     }
-                    Some(if next >= 1.0 { next - 1.0 } else { next })
+                };
+            }
+
+            if let Some(producer) = def.producer {
+                let plant = &mut self.plants[i];
+                plant.timer -= dt;
+                if plant.timer <= 0.0 {
+                    plant.timer = producer.interval;
+                    produced.push((row, col, producer.value));
                 }
-            };
+            }
+
+            if let Some(mine) = def.mine {
+                let plant = &mut self.plants[i];
+                if !plant.armed {
+                    plant.timer += dt;
+                    if plant.timer >= mine.arm_time {
+                        plant.armed = true;
+                    }
+                }
+            }
         }
 
-        for (row, x, damage, speed) in shots {
+        for (row, x, damage, speed, chill_for) in shots {
             let id = self.alloc_id();
             self.peas.push(Pea {
                 id,
@@ -421,9 +460,64 @@ impl Sim {
                 x,
                 damage,
                 speed,
+                chill_for,
             });
             self.events.push(SimEvent::PeaFired(id));
         }
+
+        for (row, col, value) in produced {
+            let id = self.alloc_id();
+            self.suns.push(Sun {
+                id,
+                x: cell_left(col) + CELL_W * 0.5,
+                y: cell_top(row) + 28.0,
+                target_y: cell_top(row) + 28.0,
+                value,
+                landed_for: 0.0,
+            });
+            self.events.push(SimEvent::SunSpawned(id));
+        }
+
+        // La papa armada revienta al zombie que la pisa y desaparece.
+        let blasts: Vec<(Id, Id, f32)> = self
+            .plants
+            .iter()
+            .filter(|plant| plant.armed && plant_def(plant.kind).mine.is_some())
+            .filter_map(|plant| {
+                let damage = plant_def(plant.kind).mine?.damage;
+                let zombie = self.zombie_on_cell(plant.row, plant.col)?;
+                Some((plant.id, self.zombies[zombie].id, damage))
+            })
+            .collect();
+        for (plant_id, zombie_id, damage) in blasts {
+            if let Some(zombie) = self.zombies.iter_mut().find(|z| z.id == zombie_id) {
+                zombie.hp -= damage;
+            }
+            if let Some(index) = self.plants.iter().position(|p| p.id == plant_id) {
+                let plant = self.plants.remove(index);
+                self.grid[plant.row][plant.col] = None;
+                self.events.push(SimEvent::PlantDied(plant.id));
+            }
+        }
+    }
+
+    /// Zombie vivo que está pisando esa celda, el que va más adelante.
+    fn zombie_on_cell(&self, row: usize, col: usize) -> Option<usize> {
+        let left = cell_left(col);
+        let right = left + CELL_W;
+        let mut best: Option<usize> = None;
+        let mut best_x = f32::MAX;
+        for (index, zombie) in self.zombies.iter().enumerate() {
+            if zombie.row != row || !zombie.is_alive() {
+                continue;
+            }
+            let front = zombie.x + zombie_def(zombie.kind).bite_reach;
+            if front > left && zombie.x < right && zombie.x < best_x {
+                best = Some(index);
+                best_x = zombie.x;
+            }
+        }
+        best
     }
 
     fn update_peas(&mut self, dt: f32) {
@@ -451,7 +545,11 @@ impl Sim {
             }
 
             if let Some(zi) = hit {
-                self.zombies[zi].hp -= pea.damage;
+                let zombie = &mut self.zombies[zi];
+                zombie.hp -= pea.damage;
+                if pea.chill_for > 0.0 {
+                    zombie.chill = zombie.chill.max(pea.chill_for);
+                }
                 self.peas.remove(i);
                 self.events.push(SimEvent::PeaRemoved {
                     id: pea.id,
@@ -477,6 +575,10 @@ impl Sim {
             .iter()
             .filter(|p| p.row == z.row)
             .find(|p| {
+                // La papa, armada o no, no se come: se pisa y luego revienta.
+                if plant_def(p.kind).mine.is_some() {
+                    return false;
+                }
                 let left = cell_left(p.col);
                 front > left && front <= left + CELL_W - 10.0
             })
@@ -484,6 +586,9 @@ impl Sim {
     }
 
     fn update_zombies(&mut self, dt: f32) {
+        for zombie in &mut self.zombies {
+            zombie.chill = (zombie.chill - dt).max(0.0);
+        }
         let mut i = 0;
         while i < self.zombies.len() {
             let z = self.zombies[i];
@@ -512,7 +617,7 @@ impl Sim {
             match z.status {
                 ZombieStatus::Walking => match self.blocking_plant(&z) {
                     Some(plant_id) => self.zombies[i].status = ZombieStatus::Eating(plant_id),
-                    None => self.zombies[i].x -= def.speed * z.speed_mul * dt,
+                    None => self.zombies[i].x -= def.speed * z.pace() * dt,
                 },
                 ZombieStatus::Eating(plant_id) => {
                     match self.plants.iter().position(|p| p.id == plant_id) {
@@ -603,6 +708,7 @@ mod tests {
             x,
             hp: zombie_def(ZombieKind::Basic).max_hp,
             speed_mul: 1.0,
+            chill: 0.0,
             status: ZombieStatus::Walking,
         });
         sim.spawned += 1;
@@ -853,6 +959,76 @@ mod tests {
         run(&mut sim, 25.0);
         assert!(sim.suns.iter().all(|s| s.id != second));
         assert!(sim.take_events().contains(&SimEvent::SunExpired(second)));
+    }
+
+    fn level_with(kind: PlantKind) -> Level {
+        Level {
+            seeds: vec![kind],
+            ..empty_level()
+        }
+    }
+
+    #[test]
+    fn el_girasol_suelta_un_sol_y_luego_espera() {
+        let mut sim = Sim::new(level_with(PlantKind::Sunflower), 1);
+        sim.plant(PlantKind::Sunflower, 2, 2).unwrap();
+        run(&mut sim, 7.4);
+        assert!(sim.suns.is_empty(), "el primero tarda 7,5 s");
+        run(&mut sim, 0.3);
+        assert_eq!(sim.suns.len(), 1);
+        assert_eq!(sim.suns[0].value, 25);
+        let id = sim.suns[0].id;
+        run(&mut sim, 5.0);
+        assert!(
+            sim.suns.iter().any(|s| s.id == id),
+            "sigue en el césped antes de caducar"
+        );
+        assert_eq!(sim.suns.len(), 1, "el siguiente sale a los 24 s");
+    }
+
+    #[test]
+    fn el_guisante_de_hielo_ralentiza_al_zombie() {
+        let mut sim = Sim::new(level_with(PlantKind::SnowPea), 1);
+        sim.plant(PlantKind::SnowPea, 0, 0).unwrap();
+        place_zombie(&mut sim, 0, 500.0);
+        sim.zombies[0].hp = 1.0e9;
+        run(&mut sim, 3.0);
+        assert!(sim.zombies[0].chill > 0.0, "el impacto deja hielo");
+        let x = sim.zombies[0].x;
+        run(&mut sim, 1.0);
+        let moved = x - sim.zombies[0].x;
+        assert!(
+            (4.0..12.0).contains(&moved),
+            "a media velocidad anda unos 9 px/s, anduvo {moved}"
+        );
+    }
+
+    #[test]
+    fn la_nuez_aguanta_mas_que_un_lanzaguisantes() {
+        let mut sim = Sim::new(level_with(PlantKind::Wallnut), 1);
+        sim.plant(PlantKind::Wallnut, 0, 2).unwrap();
+        place_zombie(&mut sim, 0, 262.0);
+        run(&mut sim, 6.0);
+        assert_eq!(sim.plants.len(), 1, "4000 de vida a 100 por segundo");
+        assert!(sim.plants[0].hp < 4000.0);
+        assert!(sim.plants[0].hp > 3000.0, "{}", sim.plants[0].hp);
+    }
+
+    #[test]
+    fn la_papa_se_pisa_y_al_armarse_revienta_al_zombie() {
+        let mut sim = Sim::new(level_with(PlantKind::PotatoMine), 1);
+        let plant = sim.plant(PlantKind::PotatoMine, 0, 2).unwrap();
+        place_zombie(&mut sim, 0, 250.0);
+        sim.zombies[0].speed_mul = 0.0;
+        run(&mut sim, 14.0);
+        assert!(!sim.plants[0].armed);
+        assert_eq!(sim.zombies[0].status, ZombieStatus::Walking);
+        assert_eq!(sim.plants[0].id, plant);
+        run(&mut sim, 1.2);
+        assert!(sim.plants.is_empty(), "la mina desaparece al explotar");
+        assert!(sim.take_events().contains(&SimEvent::PlantDied(plant)));
+        assert!(sim.zombies[0].hp <= 0.0);
+        assert!(!sim.zombies[0].is_alive());
     }
 
     #[test]

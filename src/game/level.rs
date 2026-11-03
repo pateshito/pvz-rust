@@ -29,18 +29,24 @@ impl Level {
         self.waves.iter().map(|w| w.zombies.len()).sum()
     }
 
-    /// Nivel de prueba: solo Lanzaguisantes contra zombies básicos. Sin girasoles
-    /// todavía, los soles del cielo son generosos; el balance se comprueba con un
-    /// jugador automático en `sim.rs` (si se tocan los números, correr esas pruebas).
+    /// Nivel de prueba: girasol, los dos lanzaguisantes, nuez y papa mina contra
+    /// zombies básicos. Los soles del cielo siguen siendo generosos; el balance
+    /// del lanzaguisantes se comprueba con un jugador automático en `sim.rs`.
     pub fn test_level() -> Level {
         let wave = |time: f32, n: usize| Wave {
             time,
             zombies: vec![ZombieKind::Basic; n],
         };
         Level {
-            name: "Prueba: Lanzaguisantes vs Zombi",
+            name: "Día de prueba",
             start_sun: 250,
-            seeds: vec![PlantKind::PeaShooter],
+            seeds: vec![
+                PlantKind::Sunflower,
+                PlantKind::PeaShooter,
+                PlantKind::SnowPea,
+                PlantKind::Wallnut,
+                PlantKind::PotatoMine,
+            ],
             waves: vec![
                 wave(12.0, 1),
                 wave(35.0, 1),

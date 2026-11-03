@@ -1,4 +1,4 @@
-//! Dibuja la simulación: césped, lanzaguisantes, zombi básico, guisantes y soles.
+//! Dibuja la simulación: césped, plantas, zombi básico, guisantes y soles.
 //!
 //! La lógica vive en `sim`. Aquí solo se lee el estado, se mandan órdenes y se
 //! crean o se quitan los sprites. Las coordenadas de pantalla están en `board`.
@@ -25,16 +25,21 @@ use crate::resources::CharacterLibraries;
 use crate::zombie_style::PlainStyle;
 use crate::AppState;
 
-/// El `.reanim` del lanzaguisantes ocupa unos 6..62 en x y 10..63 en y (y hacia
-/// abajo). Con esto el cuerpo queda dentro de la celda y las hojas, abajo.
+const BANK_X: f32 = 8.0;
+const BANK_Y: f32 = 4.0;
 const BANK_W: f32 = 446.0;
 const BANK_H: f32 = 87.0;
 const PACKET_X: f32 = 83.0;
 const PACKET_Y: f32 = 8.0;
 const PACKET_W: f32 = 50.0;
 const PACKET_H: f32 = 70.0;
-const PLANT_DX: f32 = 10.0;
-const PLANT_DY: f32 = 26.0;
+const PACKET_STEP: f32 = 52.0;
+/// Origen del `.reanim` dentro de la celda. El lanzaguisantes en reposo, con el
+/// ancla arriba a la izquierda, ocupa unos x 6..81 y 10..79: el centro visual
+/// cae en (44, 45). La celda mide 80×100, así que el origen va en (-4, 6).
+/// La boca, al disparar, queda entonces a la altura del guisante (y ≈ 36).
+const PLANT_DX: f32 = -4.0;
+const PLANT_DY: f32 = 6.0;
 /// Los pies de `anim_walk` están cerca de y = 115. Así quedan justo sobre el
 /// borde inferior del carril.
 const ZOMBIE_DY: f32 = -21.0;
@@ -70,6 +75,9 @@ struct SeedCard;
 struct SeedLabel;
 
 #[derive(Component)]
+struct SeedSlot(usize);
+
+#[derive(Component)]
 struct Banner;
 
 #[derive(Resource)]
@@ -82,6 +90,8 @@ struct PlayControl {
     /// Tiempo de animación. Se detiene con la pausa y al terminar la partida.
     clock: f32,
     banner: bool,
+    /// Sobre elegido en el banco. Las teclas 1-5 también lo cambian.
+    selected: usize,
     notice: String,
     notice_until: f32,
 }
@@ -158,14 +168,15 @@ fn setup(mut commands: Commands, asset_server: Res<AssetServer>) {
         PlayPiece,
     ));
 
-    // Banco de semillas: la imagen del juego con el contador de soles a la
-    // izquierda y el sobre del lanzaguisantes encima.
+    let level = Level::test_level();
+    // Banco de semillas: la imagen del juego, el contador de soles a la
+    // izquierda y un sobre por planta.
     commands
         .spawn((
             Node {
                 position_type: PositionType::Absolute,
-                left: Val::Px(8.0),
-                top: Val::Px(4.0),
+                left: Val::Px(BANK_X),
+                top: Val::Px(BANK_Y),
                 width: Val::Px(BANK_W),
                 height: Val::Px(BANK_H),
                 ..default()
@@ -183,47 +194,55 @@ fn setup(mut commands: Commands, asset_server: Res<AssetServer>) {
                     justify_content: JustifyContent::Center,
                     ..default()
                 },
-                Text::new("50"),
+                Text::new(level.start_sun.to_string()),
                 TextFont::from_font_size(17.0),
                 TextColor(Color::srgb(0.1, 0.07, 0.02)),
                 TextLayout::new_with_justify(JustifyText::Center),
                 SunText,
             ));
-            bank.spawn((
-                Node {
-                    position_type: PositionType::Absolute,
-                    left: Val::Px(PACKET_X),
-                    top: Val::Px(PACKET_Y),
-                    width: Val::Px(PACKET_W),
-                    height: Val::Px(PACKET_H),
-                    justify_content: JustifyContent::Center,
-                    ..default()
-                },
-                ImageNode::new(asset_server.load("images/SeedPacket_Larger.png")),
-                SeedCard,
-            ))
-            .with_children(|packet| {
-                packet.spawn((
+            for (index, kind) in level.seeds.iter().copied().enumerate() {
+                let def = plant_def(kind);
+                bank.spawn((
                     Node {
                         position_type: PositionType::Absolute,
-                        top: Val::Px(12.0),
-                        width: Val::Px(40.0),
+                        left: Val::Px(PACKET_X + PACKET_STEP * index as f32),
+                        top: Val::Px(PACKET_Y),
+                        width: Val::Px(PACKET_W),
+                        height: Val::Px(PACKET_H),
+                        justify_content: JustifyContent::Center,
+                        border: UiRect::all(Val::Px(3.0)),
                         ..default()
                     },
-                    ImageNode::new(asset_server.load("textures/PeaShooter/PeaShooter_Head.png")),
-                ));
-                packet.spawn((
-                    Node {
-                        position_type: PositionType::Absolute,
-                        bottom: Val::Px(2.0),
-                        ..default()
-                    },
-                    Text::new("100"),
-                    TextFont::from_font_size(13.0),
-                    TextColor(Color::srgb(0.1, 0.07, 0.02)),
-                    SeedLabel,
-                ));
-            });
+                    ImageNode::new(asset_server.load("images/SeedPacket_Larger.png")),
+                    BorderColor(Color::srgba(0.0, 0.0, 0.0, 0.0)),
+                    SeedCard,
+                    SeedSlot(index),
+                ))
+                .with_children(|packet| {
+                    packet.spawn((
+                        Node {
+                            position_type: PositionType::Absolute,
+                            top: Val::Px(8.0),
+                            width: Val::Px(34.0),
+                            height: Val::Px(34.0),
+                            ..default()
+                        },
+                        ImageNode::new(asset_server.load(def.icon)),
+                    ));
+                    packet.spawn((
+                        Node {
+                            position_type: PositionType::Absolute,
+                            bottom: Val::Px(2.0),
+                            ..default()
+                        },
+                        Text::new(def.cost.to_string()),
+                        TextFont::from_font_size(12.0),
+                        TextColor(Color::srgb(0.1, 0.07, 0.02)),
+                        SeedLabel,
+                        SeedSlot(index),
+                    ));
+                });
+            }
         });
 
     // Panel de información, a la derecha del banco.
@@ -249,15 +268,8 @@ fn setup(mut commands: Commands, asset_server: Res<AssetServer>) {
             ));
         });
 
-    commands.insert_resource(Match(Sim::new(Level::test_level(), fresh_seed(0.0))));
-    commands.insert_resource(PlayControl {
-        paused: false,
-        restart: false,
-        clock: 0.0,
-        banner: false,
-        notice: String::new(),
-        notice_until: 0.0,
-    });
+    commands.insert_resource(Match(Sim::new(level, fresh_seed(0.0))));
+    commands.insert_resource(fresh_control());
     commands.insert_resource(Actors::default());
 }
 
@@ -290,6 +302,20 @@ fn input(
     if keys.just_pressed(KeyCode::KeyP) && sim.0.outcome == Outcome::Playing {
         control.paused = !control.paused;
     }
+    for (index, key) in [
+        KeyCode::Digit1,
+        KeyCode::Digit2,
+        KeyCode::Digit3,
+        KeyCode::Digit4,
+        KeyCode::Digit5,
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        if keys.just_pressed(key) && index < sim.0.seeds.len() {
+            control.selected = index;
+        }
+    }
     if !mouse.just_pressed(MouseButton::Left) {
         return;
     }
@@ -299,6 +325,10 @@ fn input(
     let Some(cursor) = cursor_on_board(windows.iter().next()) else {
         return;
     };
+    if let Some(index) = packet_at(cursor, sim.0.seeds.len()) {
+        control.selected = index;
+        return;
+    }
 
     if let Some(id) = sim.0.sun_at(cursor.x, cursor.y) {
         sim.0.collect_sun(id);
@@ -307,13 +337,14 @@ fn input(
     let Some((row, col)) = cell_at(cursor.x, cursor.y) else {
         return;
     };
-    let Some(kind) = sim.0.seeds.first().map(|seed| seed.kind) else {
+    let Some(kind) = sim.0.seeds.get(control.selected).map(|seed| seed.kind) else {
         return;
     };
     if let Err(error) = sim.0.plant(kind, row, col) {
+        let name = plant_def(kind).name;
         control.notice = match error {
             PlantError::NotEnoughSun => "No hay soles suficientes".into(),
-            PlantError::OnCooldown => "El lanzaguisantes se está recargando".into(),
+            PlantError::OnCooldown => format!("{name} se está recargando"),
             PlantError::CellOccupied => "Esa celda está ocupada".into(),
             PlantError::OutOfBoard | PlantError::NoSuchSeed | PlantError::GameOver => String::new(),
         };
@@ -333,9 +364,12 @@ fn simulate(
     mut hover: Query<(&mut Transform, &mut Sprite, &mut Visibility), With<HoverCell>>,
     windows: Query<&Window, With<PrimaryWindow>>,
     mut status: Query<&mut Text, With<StatusText>>,
-    mut seed_label: Query<&mut Text, (With<SeedLabel>, Without<StatusText>, Without<SunText>)>,
+    mut seed_label: Query<
+        (&SeedSlot, &mut Text),
+        (With<SeedLabel>, Without<StatusText>, Without<SunText>),
+    >,
     mut sun_text: Query<&mut Text, (With<SunText>, Without<StatusText>, Without<SeedLabel>)>,
-    mut seed_color: Query<&mut ImageNode, With<SeedCard>>,
+    mut seed_color: Query<(&SeedSlot, &mut ImageNode, &mut BorderColor), With<SeedCard>>,
 ) {
     if control.restart {
         actors.despawn_all(&mut commands);
@@ -343,14 +377,7 @@ fn simulate(
             commands.entity(entity).despawn_recursive();
         }
         sim.0 = Sim::new(Level::test_level(), fresh_seed(sim.0.time));
-        *control = PlayControl {
-            paused: false,
-            restart: false,
-            clock: 0.0,
-            banner: false,
-            notice: String::new(),
-            notice_until: 0.0,
-        };
+        *control = fresh_control();
     }
 
     let playing = sim.0.outcome == Outcome::Playing && !control.paused;
@@ -416,7 +443,7 @@ fn animate(
         ),
     >,
     mut suns: Query<
-        (&SunActor, &mut Transform),
+        (&SunActor, &Children, &mut Transform),
         (
             Without<CharacterPart>,
             Without<PlantActor>,
@@ -425,7 +452,6 @@ fn animate(
         ),
     >,
 ) {
-    let pea_data = &libraries.peashooter;
     for (actor, children, mut root) in &mut plants {
         let Some(plant) = sim.0.plants.iter().find(|plant| plant.id == actor.0) else {
             continue;
@@ -437,14 +463,15 @@ fn animate(
         root.translation.x = x;
         root.translation.y = y;
         root.translation.z = plant.row as f32;
-        let (index, local) = plant_frame(pea_data, plant.shoot_phase, control.clock);
+        let data = libraries.plant(plant.kind);
+        let (index, local) = plant_frame(data, plant, control.clock);
         pose_children(
             &mut parts,
             children,
-            pea_data,
+            data,
             index,
             local,
-            "PeaShooter",
+            plant_def(plant.kind).entity,
             None,
             &asset_server,
         );
@@ -479,12 +506,28 @@ fn animate(
             xf.translation.y = y;
         }
     }
-    for (actor, mut xf) in &mut suns {
+    let sun_data = &libraries.sun;
+    for (actor, children, mut xf) in &mut suns {
         if let Some(sun) = sim.0.suns.iter().find(|sun| sun.id == actor.0) {
             let (x, y) = screen_to_world(sun.x, sun.y);
             xf.translation.x = x;
             xf.translation.y = y;
-            xf.rotation = Quat::from_rotation_z(control.clock);
+            let (index, local) = frame_in(
+                sun_data,
+                "full",
+                (control.clock * sun_data.fps) as usize,
+                true,
+            );
+            pose_children(
+                &mut parts,
+                children,
+                sun_data,
+                index,
+                local,
+                "Sun",
+                None,
+                &asset_server,
+            );
         }
     }
 }
@@ -512,10 +555,15 @@ fn apply_event(
             if let Some(pea) = sim.peas.iter().find(|pea| pea.id == id) {
                 let (x, y) =
                     screen_to_world(pea.x + PEA_WIDTH * 0.5, cell_top(pea.row) + PEA_Y_OFFSET);
+                let image = if pea.chill_for > 0.0 {
+                    "images/ProjectileSnowPea.png"
+                } else {
+                    "images/ProjectilePea.png"
+                };
                 let entity = commands
                     .spawn((
                         Sprite {
-                            image: asset_server.load("images/ProjectilePea.png"),
+                            image: asset_server.load(image),
                             custom_size: Some(Vec2::new(PEA_WIDTH, PEA_WIDTH)),
                             ..default()
                         },
@@ -532,16 +580,13 @@ fn apply_event(
                 let (x, y) = screen_to_world(sun.x, sun.y);
                 let entity = commands
                     .spawn((
-                        Sprite {
-                            image: asset_server.load("textures/Sun/Sun1.png"),
-                            custom_size: Some(Vec2::new(74.0, 74.0)),
-                            ..default()
-                        },
                         Transform::from_xyz(x, y, 12.0),
+                        Visibility::default(),
                         SunActor(id),
                         PlayPiece,
                     ))
                     .id();
+                spawn_parts(commands, asset_server, &libraries.sun, "Sun", entity, false);
                 actors.suns.insert(id, entity);
             }
         }
@@ -566,6 +611,7 @@ fn spawn_plant(
         cell_left(plant.col) + PLANT_DX,
         cell_top(plant.row) + PLANT_DY,
     );
+    let def = plant_def(plant.kind);
     let root = commands
         .spawn((
             Transform::from_xyz(x, y, plant.row as f32),
@@ -577,8 +623,8 @@ fn spawn_plant(
     spawn_parts(
         commands,
         asset_server,
-        &libraries.peashooter,
-        "PeaShooter",
+        libraries.plant(plant.kind),
+        def.entity,
         root,
         false,
     );
@@ -652,17 +698,43 @@ fn pose_children(
     }
 }
 
-fn plant_frame(data: &ReanimData, shoot_phase: Option<f32>, clock: f32) -> (usize, usize) {
-    if let Some(phase) = shoot_phase {
-        let len = frame_len(data, STATE_SHOOTING) as f32;
-        frame_in(
-            data,
-            STATE_SHOOTING,
-            (phase.clamp(0.0, 0.999) * len) as usize,
-            false,
-        )
+fn plant_frame(data: &ReanimData, plant: &crate::game::sim::Plant, clock: f32) -> (usize, usize) {
+    match plant.kind {
+        PlantKind::PeaShooter | PlantKind::SnowPea => {
+            if let Some(phase) = plant.shoot_phase {
+                let len = frame_len(data, STATE_SHOOTING) as f32;
+                frame_in(
+                    data,
+                    STATE_SHOOTING,
+                    (phase.clamp(0.0, 0.999) * len) as usize,
+                    false,
+                )
+            } else {
+                frame_in(data, STATE_IDLE, (clock * data.fps) as usize, true)
+            }
+        }
+        PlantKind::Sunflower => frame_in(data, "full", (clock * data.fps) as usize, true),
+        PlantKind::Wallnut => frame_in(data, "anim_idle", (clock * data.fps) as usize, true),
+        PlantKind::PotatoMine => potato_frame(data, plant, clock),
+    }
+}
+
+/// Enterrada en `anim_idle`, sale con `anim_rise` al final y, armada, parpadea.
+fn potato_frame(data: &ReanimData, plant: &crate::game::sim::Plant, clock: f32) -> (usize, usize) {
+    if plant.armed {
+        return frame_in(data, "anim_armed", (clock * data.fps) as usize, true);
+    }
+    let rise_len = frame_len(data, "anim_rise");
+    let rise_time = rise_len as f32 / data.fps.max(1.0);
+    let Some(mine) = plant_def(plant.kind).mine else {
+        return frame_in(data, "anim_idle", 0, false);
+    };
+    let until_arm = mine.arm_time - plant.timer;
+    if until_arm > rise_time {
+        frame_in(data, "anim_idle", 0, false)
     } else {
-        frame_in(data, STATE_IDLE, (clock * data.fps) as usize, true)
+        let local = ((rise_time - until_arm) / rise_time * rise_len as f32) as usize;
+        frame_in(data, "anim_rise", local, false)
     }
 }
 
@@ -685,13 +757,13 @@ fn zombie_frame(
         ZombieStatus::Eating(_) => frame_in(
             data,
             "anim_eat",
-            (clock * data.fps * zombie.speed_mul) as usize,
+            (clock * data.fps * zombie.pace()) as usize,
             true,
         ),
         ZombieStatus::Walking => frame_in(
             data,
             "anim_walk",
-            (clock * data.fps * zombie.speed_mul) as usize,
+            (clock * data.fps * zombie.pace()) as usize,
             true,
         ),
     }
@@ -740,7 +812,8 @@ fn place_hover(
     let (x, y) = screen_to_world(cell_left(col) + CELL_W * 0.5, cell_top(row) + CELL_H * 0.5);
     xf.translation.x = x;
     xf.translation.y = y;
-    let open = sim.plant_at(row, col).is_none() && sim.seed_status(0) == SeedStatus::Ready;
+    let open =
+        sim.plant_at(row, col).is_none() && sim.seed_status(control.selected) == SeedStatus::Ready;
     sprite.color = if open {
         Color::srgba(0.45, 1.0, 0.4, 0.28)
     } else {
@@ -754,9 +827,12 @@ fn paint_hud(
     control: &PlayControl,
     now: f32,
     status: &mut Query<&mut Text, With<StatusText>>,
-    seed_label: &mut Query<&mut Text, (With<SeedLabel>, Without<StatusText>, Without<SunText>)>,
+    seed_label: &mut Query<
+        (&SeedSlot, &mut Text),
+        (With<SeedLabel>, Without<StatusText>, Without<SunText>),
+    >,
     sun_text: &mut Query<&mut Text, (With<SunText>, Without<StatusText>, Without<SeedLabel>)>,
-    seed_color: &mut Query<&mut ImageNode, With<SeedCard>>,
+    seed_color: &mut Query<(&SeedSlot, &mut ImageNode, &mut BorderColor), With<SeedCard>>,
 ) {
     let waves = sim.level.waves.len();
     let started = sim
@@ -789,8 +865,13 @@ fn paint_hud(
     } else {
         String::new()
     };
+    let chosen = sim
+        .seeds
+        .get(control.selected)
+        .map(|seed| plant_def(seed.kind).name)
+        .unwrap_or("");
     let line = format!(
-        "{wave_text}    zombies {}/{}{flag}\nP: pausa    R: reiniciar    Esc: menú{notice}",
+        "{wave_text}    zombies {}/{}{flag}\n{chosen}    1-5 o clic en el sobre    P: pausa    R: reiniciar    Esc: menú{notice}",
         sim.killed,
         sim.level.total_zombies(),
     );
@@ -802,24 +883,64 @@ fn paint_hud(
         text.0 = sim.sun.to_string();
     }
 
-    let cost = plant_def(PlantKind::PeaShooter).cost;
-    let (label, tint) = match sim.seed_status(0) {
-        SeedStatus::Ready => (cost.to_string(), Color::WHITE),
-        SeedStatus::Cooldown => {
-            let left = sim
-                .seeds
-                .first()
-                .map(|seed| seed.cooldown_left)
-                .unwrap_or(0.0);
-            (format!("{left:.0}s"), Color::srgb(0.45, 0.45, 0.45))
-        }
-        SeedStatus::NoSun => (cost.to_string(), Color::srgb(0.7, 0.55, 0.5)),
-    };
-    for mut text in seed_label.iter_mut() {
-        text.0 = label.clone();
+    for (slot, mut text) in seed_label.iter_mut() {
+        let cost = sim
+            .seeds
+            .get(slot.0)
+            .map(|seed| plant_def(seed.kind).cost)
+            .unwrap_or(0);
+        text.0 = match sim.seed_status(slot.0) {
+            SeedStatus::Cooldown => {
+                let left = sim
+                    .seeds
+                    .get(slot.0)
+                    .map(|seed| seed.cooldown_left)
+                    .unwrap_or(0.0);
+                format!("{left:.0}s")
+            }
+            SeedStatus::Ready | SeedStatus::NoSun => cost.to_string(),
+        };
     }
-    for mut image in seed_color.iter_mut() {
-        image.color = tint;
+    for (slot, mut image, mut border) in seed_color.iter_mut() {
+        let selected = slot.0 == control.selected;
+        image.color = match sim.seed_status(slot.0) {
+            SeedStatus::Ready => Color::WHITE,
+            SeedStatus::Cooldown => Color::srgb(0.45, 0.45, 0.45),
+            SeedStatus::NoSun => Color::srgb(0.7, 0.55, 0.5),
+        };
+        border.0 = if selected {
+            Color::srgb(1.0, 0.86, 0.25)
+        } else {
+            Color::srgba(0.0, 0.0, 0.0, 0.0)
+        };
+    }
+}
+
+fn packet_at(cursor: Vec2, count: usize) -> Option<usize> {
+    let x = cursor.x - BANK_X - PACKET_X;
+    let y = cursor.y - BANK_Y - PACKET_Y;
+    if x < 0.0 || y < 0.0 || y > PACKET_H {
+        return None;
+    }
+    let index = (x / PACKET_STEP) as usize;
+    (index < count && x - index as f32 * PACKET_STEP <= PACKET_W).then_some(index)
+}
+
+fn fresh_control() -> PlayControl {
+    let level = Level::test_level();
+    let selected = level
+        .seeds
+        .iter()
+        .position(|kind| *kind == PlantKind::PeaShooter)
+        .unwrap_or(0);
+    PlayControl {
+        paused: false,
+        restart: false,
+        clock: 0.0,
+        banner: false,
+        selected,
+        notice: String::new(),
+        notice_until: 0.0,
     }
 }
 
