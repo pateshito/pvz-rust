@@ -388,7 +388,7 @@ Objetivo de diseño:
 - [x] **P0** Definir el tablero: 5 carriles × 9 columnas, coordenadas y escala. Se dibuja en `Jugar`.
 - [ ] **P0** Fondo, césped, casa, carretilla y límites. Hechos el fondo de día (`background1.jpg`, incluye casa y césped) y el límite de la casa. Falta la carretilla: la simulación aún no la tiene.
 - [x] **P1** Colocación de plantas con rejilla y snapping.
-- [ ] **P1** Shovel/recogida.
+- [x] **P1** Shovel/recogida. La pala se elige, sigue al cursor y quita una planta. No devuelve soles.
 - [x] **P1** Estado de nivel: soles, progreso, oleada, victoria/derrota.
 - [x] **P1** Pausa y reinicio.
 - [ ] **P2** Soportar varios tipos de terreno (día, noche, piscina, tejado).
@@ -470,7 +470,7 @@ Orden concreto para no bloquearse:
 1. **Catálogo + resolución genérica** (Fase 1). ✅ Hecho: desbloquea todo lo demás.
 2. **Visor de cualquier entidad** (Fase 3). ✅ Hecho el P1. Quedan captura de frames y el modo comparar (P2).
 3. **Parser robusto + tests** (Fase 2). Hechos el `AnimState` genérico y los tests con `.reanim` reales. Siguen abiertos el reparto del parser en varios archivos y la validación con número de línea.
-4. **Tablero mínimo + PeaShooter vs zombie base** (Fases 4–7). ✅ Se juega el nivel de prueba. Faltan la pala, la carretilla y el resto de plantas y zombies.
+4. **Tablero mínimo + PeaShooter vs zombie base** (Fases 4–7). ✅ Se juega el nivel de prueba, con pala de un solo uso. Faltan la carretilla y el resto de plantas y zombies.
 5. **Resto de plantas/zombies data-driven** (Fases 5–6).
 6. **UI/audio/progresión** (Fase 8).
 7. **Empaquetado y CI** (Fase 9).

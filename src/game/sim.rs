@@ -282,6 +282,25 @@ impl Sim {
         self.plants.iter().find(|p| p.id == id)
     }
 
+    /// Quita la planta de esa celda. No devuelve soles. El zombie que la comía
+    /// vuelve a caminar.
+    pub fn dig(&mut self, row: usize, col: usize) -> Option<Id> {
+        if self.outcome != Outcome::Playing || row >= ROWS || col >= COLS {
+            return None;
+        }
+        let id = self.grid[row][col]?;
+        let index = self.plants.iter().position(|plant| plant.id == id)?;
+        self.plants.remove(index);
+        self.grid[row][col] = None;
+        for zombie in &mut self.zombies {
+            if zombie.status == ZombieStatus::Eating(id) {
+                zombie.status = ZombieStatus::Walking;
+            }
+        }
+        self.events.push(SimEvent::PlantDied(id));
+        Some(id)
+    }
+
     /// Sol bajo un punto de pantalla (el de más arriba si se solapan).
     pub fn sun_at(&self, x: f32, y: f32) -> Option<Id> {
         self.suns
@@ -873,6 +892,34 @@ mod tests {
         assert_eq!(sim.zombies[0].status, ZombieStatus::Walking);
         assert!(sim.zombies[0].x < before, "vuelve a caminar");
         assert!(eating_x < 262.0);
+    }
+
+    #[test]
+    fn la_pala_quita_la_planta_y_el_zombie_sigue() {
+        let mut sim = Sim::new(empty_level(), 1);
+        sim.plant(PlantKind::PeaShooter, 0, 2).unwrap();
+        let plant_id = sim.plants[0].id;
+        let sun = sim.sun;
+        place_zombie(&mut sim, 0, 262.0);
+        run(&mut sim, 1.5);
+        assert_eq!(sim.zombies[0].status, ZombieStatus::Eating(plant_id));
+        sim.take_events();
+
+        assert_eq!(sim.dig(0, 2), Some(plant_id));
+        assert!(sim.plants.is_empty());
+        assert!(sim.plant_at(0, 2).is_none());
+        assert_eq!(sim.zombies[0].status, ZombieStatus::Walking);
+        assert_eq!(sim.sun, sun, "la pala no devuelve soles");
+        assert!(sim.take_events().contains(&SimEvent::PlantDied(plant_id)));
+        assert_eq!(sim.dig(0, 2), None);
+        assert_eq!(sim.dig(9, 0), None);
+
+        run(&mut sim, 7.6);
+        assert!(sim.plant(PlantKind::PeaShooter, 0, 2).is_ok());
+        sim.outcome = Outcome::Lost;
+        let id = sim.plants[0].id;
+        assert_eq!(sim.dig(0, 2), None);
+        assert_eq!(sim.plant_at(0, 2).map(|plant| plant.id), Some(id));
     }
 
     #[test]

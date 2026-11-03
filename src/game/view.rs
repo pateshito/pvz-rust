@@ -19,7 +19,7 @@ use crate::game::board::{
 use crate::game::defs::{plant_def, zombie_def, PlantKind};
 use crate::game::level::Level;
 use crate::game::sim::{
-    Id, Outcome, PlantError, SeedStatus, Sim, SimEvent, ZombieStatus, PEA_WIDTH, PEA_Y_OFFSET,
+    Id, Outcome, SeedStatus, Sim, SimEvent, ZombieStatus, PEA_WIDTH, PEA_Y_OFFSET,
 };
 use crate::peashooter::{state_index, STATE_IDLE, STATE_SHOOTING};
 use crate::reanim::{ReanimData, BLINK_PERIOD};
@@ -41,9 +41,14 @@ const PACKET_STEP: f32 = 52.0;
 const ICON_INSET_X: f32 = 5.0;
 const ICON_TOP: f32 = 4.0;
 const ICON_BOTTOM: f32 = 16.0;
-/// El banco es UI y se dibuja después del césped. El reposo del sobre va en
-/// esta capa, con una cámara que no limpia la pantalla, para quedar encima.
+/// El banco es UI y se dibuja después del césped. El reposo del sobre y lo que
+/// sigue al cursor van en esta capa, con una cámara que no limpia la pantalla.
 const PREVIEW_LAYER: usize = 1;
+/// Casilla de la pala, dentro del hueco derecho del banco.
+const SHOVEL_W: f32 = 70.0;
+const SHOVEL_H: f32 = 72.0;
+const SHOVEL_X: f32 = BANK_X + BANK_W - 14.0 - SHOVEL_W;
+const SHOVEL_Y: f32 = BANK_Y + (BANK_H - SHOVEL_H) * 0.5;
 /// Origen del `.reanim` dentro de la celda. El lanzaguisantes en reposo, con el
 /// ancla arriba a la izquierda, ocupa unos x 6..81 y 10..79: el centro visual
 /// cae en (44, 45). La celda mide 80×100, así que el origen va en (-4, 6).
@@ -87,12 +92,37 @@ struct SeedLabel;
 #[derive(Component)]
 struct SeedSlot(usize);
 
-/// Reposo animado dibujado encima de un sobre.
+/// Reposo quieto dibujado encima de un sobre.
 #[derive(Component)]
 struct SeedPreview {
     slot: usize,
     kind: PlantKind,
 }
+
+/// Lo que el jugador lleva en el cursor. Se gasta al usarlo.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Hand {
+    Empty,
+    Seed(usize),
+    Shovel,
+}
+
+#[derive(Component)]
+struct ShovelButton;
+
+#[derive(Component)]
+struct ShovelIcon;
+
+/// Planta a tamaño real pegada al cursor.
+#[derive(Component)]
+struct CursorPlant {
+    kind: PlantKind,
+    /// Centro visual del reposo, en píxeles del reanim (y hacia abajo).
+    center: Vec2,
+}
+
+#[derive(Component)]
+struct CursorShovel;
 
 #[derive(Component)]
 struct Banner;
@@ -107,8 +137,8 @@ struct PlayControl {
     /// Tiempo de animación. Se detiene con la pausa y al terminar la partida.
     clock: f32,
     banner: bool,
-    /// Sobre elegido en el banco. Las teclas 1-5 también lo cambian.
-    selected: usize,
+    /// Sobre o pala pegados al cursor. Vacío hasta que se elige uno.
+    hand: Hand,
     notice: String,
     notice_until: f32,
 }
@@ -153,7 +183,7 @@ pub fn register(app: &mut App) {
         .add_systems(OnExit(AppState::Play), cleanup)
         .add_systems(
             Update,
-            (input, simulate, apply_deferred, animate)
+            (input, simulate, sync_hand, apply_deferred, animate)
                 .chain()
                 .run_if(in_state(AppState::Play)),
         );
@@ -290,6 +320,49 @@ fn setup(
             ));
         });
 
+    commands
+        .spawn((
+            Node {
+                position_type: PositionType::Absolute,
+                left: Val::Px(SHOVEL_X),
+                top: Val::Px(SHOVEL_Y),
+                width: Val::Px(SHOVEL_W),
+                height: Val::Px(SHOVEL_H),
+                border: UiRect::all(Val::Px(3.0)),
+                ..default()
+            },
+            ImageNode::new(asset_server.load("images/ShovelBank.png")),
+            BorderColor(Color::srgba(0.0, 0.0, 0.0, 0.0)),
+            ShovelButton,
+            PlayPiece,
+        ))
+        .with_children(|slot| {
+            slot.spawn((
+                Node {
+                    position_type: PositionType::Absolute,
+                    left: Val::Px((SHOVEL_W - 80.0) * 0.5),
+                    top: Val::Px((SHOVEL_H - 80.0) * 0.5),
+                    width: Val::Px(80.0),
+                    height: Val::Px(80.0),
+                    ..default()
+                },
+                ImageNode::new(asset_server.load("images/Shovel.png")),
+                ShovelIcon,
+            ));
+        });
+
+    commands.spawn((
+        Sprite {
+            image: asset_server.load("images/Shovel.png"),
+            ..default()
+        },
+        Transform::from_xyz(0.0, 0.0, 41.0),
+        Visibility::Hidden,
+        RenderLayers::layer(PREVIEW_LAYER),
+        CursorShovel,
+        PlayPiece,
+    ));
+
     spawn_seed_previews(&mut commands, &asset_server, &libraries, &level);
 
     commands.insert_resource(Match(Sim::new(level, fresh_seed(0.0))));
@@ -326,6 +399,7 @@ fn input(
     if keys.just_pressed(KeyCode::KeyP) && sim.0.outcome == Outcome::Playing {
         control.paused = !control.paused;
     }
+    let now = time.elapsed_secs();
     for (index, key) in [
         KeyCode::Digit1,
         KeyCode::Digit2,
@@ -337,8 +411,12 @@ fn input(
     .enumerate()
     {
         if keys.just_pressed(key) && index < sim.0.seeds.len() {
-            control.selected = index;
+            take_seed(&mut control, &sim.0, index, now);
         }
+    }
+    if mouse.just_pressed(MouseButton::Right) {
+        control.hand = Hand::Empty;
+        return;
     }
     if !mouse.just_pressed(MouseButton::Left) {
         return;
@@ -350,7 +428,15 @@ fn input(
         return;
     };
     if let Some(index) = packet_at(cursor, sim.0.seeds.len()) {
-        control.selected = index;
+        take_seed(&mut control, &sim.0, index, now);
+        return;
+    }
+    if shovel_at(cursor) {
+        control.hand = if control.hand == Hand::Shovel {
+            Hand::Empty
+        } else {
+            Hand::Shovel
+        };
         return;
     }
 
@@ -358,22 +444,62 @@ fn input(
         sim.0.collect_sun(id);
         return;
     }
-    let Some((row, col)) = cell_at(cursor.x, cursor.y) else {
-        return;
-    };
-    let Some(kind) = sim.0.seeds.get(control.selected).map(|seed| seed.kind) else {
-        return;
-    };
-    if let Err(error) = sim.0.plant(kind, row, col) {
-        let name = plant_def(kind).name;
-        control.notice = match error {
-            PlantError::NotEnoughSun => "No hay soles suficientes".into(),
-            PlantError::OnCooldown => format!("{name} se está recargando"),
-            PlantError::CellOccupied => "Esa celda está ocupada".into(),
-            PlantError::OutOfBoard | PlantError::NoSuchSeed | PlantError::GameOver => String::new(),
-        };
-        control.notice_until = time.elapsed_secs() + 1.6;
+    match control.hand {
+        Hand::Empty => {}
+        Hand::Shovel => {
+            let Some((row, col)) = cell_at(cursor.x, cursor.y) else {
+                return;
+            };
+            if sim.0.dig(row, col).is_some() {
+                control.hand = Hand::Empty;
+            }
+        }
+        Hand::Seed(index) => {
+            let Some((row, col)) = cell_at(cursor.x, cursor.y) else {
+                return;
+            };
+            let Some(kind) = sim.0.seeds.get(index).map(|seed| seed.kind) else {
+                control.hand = Hand::Empty;
+                return;
+            };
+            if sim.0.plant(kind, row, col).is_ok() {
+                control.hand = Hand::Empty;
+            } else {
+                let name = plant_def(kind).name;
+                notify(
+                    &mut control,
+                    now,
+                    match sim.0.seed_status(index) {
+                        SeedStatus::NoSun => "No hay soles suficientes".into(),
+                        SeedStatus::Cooldown => format!("{name} se está recargando"),
+                        SeedStatus::Ready => "Esa celda está ocupada".into(),
+                    },
+                );
+            }
+        }
     }
+}
+
+/// Coge el sobre, o lo suelta si ya iba en el cursor. En recarga o sin soles no se coge.
+fn take_seed(control: &mut PlayControl, sim: &Sim, index: usize, now: f32) {
+    if control.hand == Hand::Seed(index) {
+        control.hand = Hand::Empty;
+        return;
+    }
+    let Some(seed) = sim.seeds.get(index) else {
+        return;
+    };
+    let name = plant_def(seed.kind).name;
+    match sim.seed_status(index) {
+        SeedStatus::Ready => control.hand = Hand::Seed(index),
+        SeedStatus::Cooldown => notify(control, now, format!("{name} se está recargando")),
+        SeedStatus::NoSun => notify(control, now, "No hay soles suficientes".into()),
+    }
+}
+
+fn notify(control: &mut PlayControl, now: f32, text: String) {
+    control.notice = text;
+    control.notice_until = now + 1.6;
 }
 
 fn simulate(
@@ -476,6 +602,7 @@ fn animate(
         ),
     >,
     previews: Query<(&SeedPreview, &Children)>,
+    cursor_plants: Query<(&CursorPlant, &Children)>,
 ) {
     for (actor, children, mut root) in &mut plants {
         let Some(plant) = sim.0.plants.iter().find(|plant| plant.id == actor.0) else {
@@ -565,13 +692,7 @@ fn animate(
 
     for (preview, children) in &previews {
         let data = libraries.plant(preview.kind);
-        let (index, local) = frame_in(
-            data,
-            preview_state(preview.kind),
-            (control.clock * data.fps) as usize,
-            true,
-        );
-        let phase = (preview.slot as f32 * 0.9) % BLINK_PERIOD;
+        let (index, local) = frame_in(data, preview_state(preview.kind), 0, false);
         pose_children(
             &mut parts,
             children,
@@ -581,14 +702,31 @@ fn animate(
             plant_def(preview.kind).entity,
             None,
             &asset_server,
-            control.clock,
-            phase,
+            0.0,
+            0.0,
         );
         let tint = seed_tint(sim.0.seed_status(preview.slot));
         let mut iter = parts.iter_many_mut(children);
         while let Some((_, mut sprite, _, _)) = iter.fetch_next() {
             sprite.color = tint;
         }
+    }
+
+    for (cursor, children) in &cursor_plants {
+        let data = libraries.plant(cursor.kind);
+        let (index, local) = frame_in(data, preview_state(cursor.kind), 0, false);
+        pose_children(
+            &mut parts,
+            children,
+            data,
+            index,
+            local,
+            plant_def(cursor.kind).entity,
+            None,
+            &asset_server,
+            0.0,
+            0.0,
+        );
     }
 }
 
@@ -866,6 +1004,147 @@ fn frame_len(data: &ReanimData, name: &str) -> usize {
         .unwrap_or(1)
 }
 
+fn sync_hand(
+    mut commands: Commands,
+    asset_server: Res<AssetServer>,
+    libraries: Res<CharacterLibraries>,
+    sim: Res<Match>,
+    control: Res<PlayControl>,
+    windows: Query<&Window, With<PrimaryWindow>>,
+    mut plant_cursor: Query<
+        (Entity, &CursorPlant, &mut Transform, &mut Visibility),
+        (Without<CursorShovel>, Without<ShovelIcon>),
+    >,
+    mut shovel_cursor: Query<
+        (&mut Transform, &mut Visibility),
+        (
+            With<CursorShovel>,
+            Without<CursorPlant>,
+            Without<ShovelIcon>,
+        ),
+    >,
+    mut shovel_icon: Query<
+        &mut Visibility,
+        (
+            With<ShovelIcon>,
+            Without<CursorPlant>,
+            Without<CursorShovel>,
+        ),
+    >,
+    mut shovel_button: Query<&mut BorderColor, With<ShovelButton>>,
+) {
+    let cursor = cursor_on_board(windows.iter().next());
+    let holding_shovel = control.hand == Hand::Shovel;
+    for mut icon in &mut shovel_icon {
+        *icon = if holding_shovel {
+            Visibility::Hidden
+        } else {
+            Visibility::Inherited
+        };
+    }
+    for mut border in &mut shovel_button {
+        border.0 = if holding_shovel {
+            Color::srgb(1.0, 0.86, 0.25)
+        } else {
+            Color::srgba(0.0, 0.0, 0.0, 0.0)
+        };
+    }
+    if let Ok((mut xf, mut vis)) = shovel_cursor.get_single_mut() {
+        if holding_shovel {
+            if let Some(cursor) = cursor {
+                let (x, y) = screen_to_world(cursor.x, cursor.y);
+                xf.translation.x = x;
+                xf.translation.y = y;
+                *vis = Visibility::Inherited;
+            } else {
+                *vis = Visibility::Hidden;
+            }
+        } else {
+            *vis = Visibility::Hidden;
+        }
+    }
+
+    let held = match control.hand {
+        Hand::Seed(index) => sim.0.seeds.get(index).map(|seed| seed.kind),
+        Hand::Empty | Hand::Shovel => None,
+    };
+    let mut kept = false;
+    for (entity, plant, mut xf, mut vis) in &mut plant_cursor {
+        if held == Some(plant.kind) && !kept {
+            place_on_cursor(&mut xf, &mut vis, plant.center, cursor);
+            kept = true;
+        } else {
+            commands.entity(entity).despawn_recursive();
+        }
+    }
+    if let Some(kind) = held {
+        if !kept {
+            spawn_cursor_plant(&mut commands, &asset_server, &libraries, kind, cursor);
+        }
+    }
+}
+
+fn place_on_cursor(xf: &mut Transform, vis: &mut Visibility, center: Vec2, cursor: Option<Vec2>) {
+    let Some(cursor) = cursor else {
+        *vis = Visibility::Hidden;
+        return;
+    };
+    let (x, y) = screen_to_world(cursor.x - center.x, cursor.y - center.y);
+    xf.translation.x = x;
+    xf.translation.y = y;
+    *vis = Visibility::Inherited;
+}
+
+fn spawn_cursor_plant(
+    commands: &mut Commands,
+    asset_server: &AssetServer,
+    libraries: &CharacterLibraries,
+    kind: PlantKind,
+    cursor: Option<Vec2>,
+) {
+    let def = plant_def(kind);
+    let data = libraries.plant(kind);
+    let center = visual_center(kind, data);
+    let (x, y, vis) = match cursor {
+        Some(cursor) => {
+            let (x, y) = screen_to_world(cursor.x - center.x, cursor.y - center.y);
+            (x, y, Visibility::Inherited)
+        }
+        None => (0.0, 0.0, Visibility::Hidden),
+    };
+    let root = commands
+        .spawn((
+            Transform::from_xyz(x, y, 40.0),
+            vis,
+            CursorPlant { kind, center },
+            PlayPiece,
+        ))
+        .id();
+    spawn_parts(
+        commands,
+        asset_server,
+        data,
+        def.entity,
+        root,
+        false,
+        Some(PREVIEW_LAYER),
+    );
+}
+
+fn visual_center(kind: PlantKind, data: &ReanimData) -> Vec2 {
+    let bounds =
+        idle_bounds(data, plant_def(kind).entity, preview_state(kind)).unwrap_or(ScreenBox {
+            min_x: 0.0,
+            min_y: 0.0,
+            max_x: 80.0,
+            max_y: 80.0,
+        });
+    Vec2::new(
+        (bounds.min_x + bounds.max_x) * 0.5,
+        (bounds.min_y + bounds.max_y) * 0.5,
+    )
+}
+
 fn place_hover(
     sim: &Sim,
     control: &PlayControl,
@@ -886,14 +1165,26 @@ fn place_hover(
     let (x, y) = screen_to_world(cell_left(col) + CELL_W * 0.5, cell_top(row) + CELL_H * 0.5);
     xf.translation.x = x;
     xf.translation.y = y;
-    let open =
-        sim.plant_at(row, col).is_none() && sim.seed_status(control.selected) == SeedStatus::Ready;
-    sprite.color = if open {
-        Color::srgba(0.45, 1.0, 0.4, 0.28)
-    } else {
-        Color::srgba(1.0, 0.35, 0.25, 0.28)
+    let occupied = sim.plant_at(row, col).is_some();
+    let (show, color) = match control.hand {
+        Hand::Seed(index) => {
+            let open = !occupied && sim.seed_status(index) == SeedStatus::Ready;
+            let color = if open {
+                Color::srgba(0.45, 1.0, 0.4, 0.28)
+            } else {
+                Color::srgba(1.0, 0.35, 0.25, 0.28)
+            };
+            (true, color)
+        }
+        Hand::Shovel => (occupied, Color::srgba(0.95, 0.55, 0.2, 0.35)),
+        Hand::Empty => (false, Color::WHITE),
     };
-    *vis = Visibility::Inherited;
+    if show {
+        sprite.color = color;
+        *vis = Visibility::Inherited;
+    } else {
+        *vis = Visibility::Hidden;
+    }
 }
 
 fn seed_tint(status: SeedStatus) -> Color {
@@ -1137,13 +1428,17 @@ fn paint_hud(
     } else {
         String::new()
     };
-    let chosen = sim
-        .seeds
-        .get(control.selected)
-        .map(|seed| plant_def(seed.kind).name)
-        .unwrap_or("");
+    let chosen = match control.hand {
+        Hand::Seed(index) => sim
+            .seeds
+            .get(index)
+            .map(|seed| plant_def(seed.kind).name)
+            .unwrap_or(""),
+        Hand::Shovel => "Pala",
+        Hand::Empty => "",
+    };
     let line = format!(
-        "{wave_text}    zombies {}/{}{flag}\n{chosen}    1-5 o clic en el sobre    P: pausa    R: reiniciar    Esc: menú{notice}",
+        "{wave_text}    zombies {}/{}{flag}\n{chosen}    1-5 o clic, luego en el césped    clic derecho suelta    P: pausa    Esc: menú{notice}",
         sim.killed,
         sim.level.total_zombies(),
     );
@@ -1174,7 +1469,7 @@ fn paint_hud(
         };
     }
     for (slot, mut image, mut border) in seed_color.iter_mut() {
-        let selected = slot.0 == control.selected;
+        let selected = matches!(control.hand, Hand::Seed(index) if index == slot.0);
         image.color = seed_tint(sim.seed_status(slot.0));
         border.0 = if selected {
             Color::srgb(1.0, 0.86, 0.25)
@@ -1182,6 +1477,13 @@ fn paint_hud(
             Color::srgba(0.0, 0.0, 0.0, 0.0)
         };
     }
+}
+
+fn shovel_at(cursor: Vec2) -> bool {
+    cursor.x >= SHOVEL_X
+        && cursor.x <= SHOVEL_X + SHOVEL_W
+        && cursor.y >= SHOVEL_Y
+        && cursor.y <= SHOVEL_Y + SHOVEL_H
 }
 
 fn packet_at(cursor: Vec2, count: usize) -> Option<usize> {
@@ -1195,18 +1497,12 @@ fn packet_at(cursor: Vec2, count: usize) -> Option<usize> {
 }
 
 fn fresh_control() -> PlayControl {
-    let level = Level::test_level();
-    let selected = level
-        .seeds
-        .iter()
-        .position(|kind| *kind == PlantKind::PeaShooter)
-        .unwrap_or(0);
     PlayControl {
         paused: false,
         restart: false,
         clock: 0.0,
         banner: false,
-        selected,
+        hand: Hand::Empty,
         notice: String::new(),
         notice_until: 0.0,
     }
@@ -1349,6 +1645,16 @@ mod tests {
             let fill = ((max_x - min_x) / target.width()).max((max_y - min_y) / target.height());
             assert!(fill > 0.97, "{} llena {fill}", def.entity);
         }
+    }
+
+    #[test]
+    fn la_pala_tiene_su_casilla() {
+        assert!(shovel_at(Vec2::new(SHOVEL_X + 8.0, SHOVEL_Y + 8.0)));
+        assert!(!shovel_at(Vec2::new(SHOVEL_X - 2.0, SHOVEL_Y + 8.0)));
+        assert!(!shovel_at(Vec2::new(
+            BANK_X + PACKET_X + 10.0,
+            BANK_Y + PACKET_Y + 10.0
+        )));
     }
 
     #[test]
