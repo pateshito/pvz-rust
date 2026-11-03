@@ -44,11 +44,14 @@ const ICON_BOTTOM: f32 = 16.0;
 /// El banco es UI y se dibuja después del césped. El reposo del sobre y lo que
 /// sigue al cursor van en esta capa, con una cámara que no limpia la pantalla.
 pub(crate) const PREVIEW_LAYER: usize = 1;
-/// Casilla de la pala, dentro del hueco derecho del banco.
+/// Casilla de la pala: HUD propio a la derecha del banco de semillas.
 const SHOVEL_W: f32 = 70.0;
 const SHOVEL_H: f32 = 72.0;
-const SHOVEL_X: f32 = BANK_X + BANK_W - 14.0 - SHOVEL_W;
+const SHOVEL_X: f32 = BANK_X + BANK_W + 8.0;
 const SHOVEL_Y: f32 = BANK_Y + (BANK_H - SHOVEL_H) * 0.5;
+/// Panel de estado, a la derecha de la pala.
+const INFO_X: f32 = SHOVEL_X + SHOVEL_W + 12.0;
+const INFO_W: f32 = SCREEN_W - INFO_X - 8.0;
 /// Sobre que aparece al ganar un nivel y desbloquear una planta.
 const UNLOCK_TOP: f32 = 250.0;
 /// Origen del `.reanim` dentro de la celda. El lanzaguisantes en reposo, con el
@@ -323,13 +326,14 @@ fn setup(
             }
         });
 
-    // Panel de información, a la derecha del banco.
+    // Panel de información, a la derecha de la pala.
     commands
         .spawn((
             Node {
                 position_type: PositionType::Absolute,
-                left: Val::Px(BANK_W + 24.0),
+                left: Val::Px(INFO_X),
                 top: Val::Px(8.0),
+                width: Val::Px(INFO_W),
                 padding: UiRect::axes(Val::Px(12.0), Val::Px(6.0)),
                 ..default()
             },
@@ -432,6 +436,7 @@ fn input(
         KeyCode::Digit3,
         KeyCode::Digit4,
         KeyCode::Digit5,
+        KeyCode::Digit6,
     ]
     .into_iter()
     .enumerate()
@@ -1610,7 +1615,7 @@ fn paint_hud(
         Hand::Empty => "",
     };
     let line = format!(
-        "{wave_text}    zombies {}/{}{flag}\n{chosen}    1-5 o clic, luego en el césped    clic derecho suelta    P: pausa    Esc: menú{notice}",
+        "{wave_text}    zombies {}/{}{flag}\n{chosen}    1-6 o clic, luego en el césped    clic derecho suelta    P: pausa    Esc: menú{notice}",
         sim.killed,
         sim.level.total_zombies(),
     );
@@ -1993,6 +1998,14 @@ mod tests {
     fn la_pala_tiene_su_casilla() {
         assert!(shovel_at(Vec2::new(SHOVEL_X + 8.0, SHOVEL_Y + 8.0)));
         assert!(!shovel_at(Vec2::new(SHOVEL_X - 2.0, SHOVEL_Y + 8.0)));
+        assert!(
+            SHOVEL_X >= BANK_X + BANK_W,
+            "la pala va en su propio HUD, fuera del banco"
+        );
+        assert!(
+            BANK_X + PACKET_X + PACKET_STEP * 5.0 + PACKET_W <= BANK_X + BANK_W,
+            "el banco deja sitio para seis sobres"
+        );
         assert!(!shovel_at(Vec2::new(
             BANK_X + PACKET_X + 10.0,
             BANK_Y + PACKET_Y + 10.0

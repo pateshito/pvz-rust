@@ -147,7 +147,7 @@ impl PlantLoadout {
             self.chosen.remove(index);
         } else {
             if self.chosen.len() >= MAX_LOADOUT {
-                return Err("Solo puedes llevar 5 plantas.");
+                return Err("Solo puedes llevar 6 plantas.");
             }
             self.chosen.push(kind);
             self.chosen.sort_by_key(|plant| {
@@ -281,14 +281,15 @@ mod tests {
     }
 
     #[test]
-    fn el_equipamiento_no_pasa_de_cinco_plantas() {
+    fn el_equipamiento_no_pasa_de_seis_plantas() {
         let mut loadout = PlantLoadout::default();
         assert_eq!(loadout.chosen.len(), 2);
         assert!(loadout.toggle(PlantKind::CherryBomb).is_ok());
         assert!(loadout.toggle(PlantKind::Wallnut).is_ok());
         assert!(loadout.toggle(PlantKind::PotatoMine).is_ok());
+        assert!(loadout.toggle(PlantKind::SnowPea).is_ok());
         assert_eq!(loadout.chosen.len(), MAX_LOADOUT);
-        assert!(loadout.toggle(PlantKind::SnowPea).is_err());
+        assert!(loadout.toggle(PlantKind::Chomper).is_err());
         assert_eq!(loadout.chosen.len(), MAX_LOADOUT);
     }
 

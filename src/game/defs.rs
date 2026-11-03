@@ -30,8 +30,8 @@ pub const ALL_PLANTS: [PlantKind; 8] = [
     PlantKind::Repeater,
 ];
 
-/// Sobres que caben en el banco de semillas junto a la pala.
-pub const MAX_LOADOUT: usize = 5;
+/// Sobres que caben en el banco de semillas.
+pub const MAX_LOADOUT: usize = 6;
 
 /// Planta que hay que completar para desbloquear cada una.
 /// `None` significa disponible desde el principio. Hay una sola planta nueva
