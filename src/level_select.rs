@@ -66,7 +66,7 @@ pub fn setup_level_select(
                 flex_direction: FlexDirection::Row,
                 align_items: AlignItems::Center,
                 justify_content: JustifyContent::Center,
-                column_gap: Val::Px(14.0),
+                column_gap: Val::Px(10.0),
                 ..default()
             })
             .with_children(|row| {
@@ -79,8 +79,8 @@ pub fn setup_level_select(
                     row.spawn((
                         Button,
                         Node {
-                            width: Val::Px(130.0),
-                            height: Val::Px(150.0),
+                            width: Val::Px(112.0),
+                            height: Val::Px(140.0),
                             flex_direction: FlexDirection::Column,
                             align_items: AlignItems::Center,
                             justify_content: JustifyContent::Center,
