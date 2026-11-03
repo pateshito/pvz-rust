@@ -330,6 +330,82 @@ Objetivo de diseño:
 
 > Leyenda: `P0` = bloquea lo demás · `P1` = necesario para jugar · `P2` = pulido/distribución.
 
+### 3.0 Orden cronológico de desbloqueo de plantas
+
+Referencia de diseño para la campaña. Cada planta se desbloquea al completar el
+nivel indicado, en este orden:
+
+**☀️ Etapa 1: El Día (Nivel 1)**
+
+- Inicio: Lanzaguisantes (planta base automatizada).
+- 1-1: Girasol (genera soles para plantar).
+- 1-2: Petacereza (explosivo en área de 3×3).
+- 1-3: Nuez (barrera defensiva con gran salud).
+- 1-4: Papapum (mina terrestre que requiere armarse).
+- 1-6: Guisante de hielo (dispara guisantes que ralentizan zombis).
+- 1-7: Planta carnívora (devora zombis enteros, pero es vulnerable al masticar).
+- 1-8: Repetidora (dispara dos guisantes a la vez).
+- Nota: en el nivel 1-5 se obtiene la Pala y en el 1-10 una nota de los zombis.
+
+**🌙 Etapa 2: La Noche (Nivel 2)**
+
+- 2-1: Desesporada (seta gratuita de corto alcance).
+- 2-2: Seta solar (genera soles pequeños y luego crece).
+- 2-3: Humoseta (dispara humo que atraviesa las puertas de rejilla).
+- 2-4: Comepiedras (remueve las lápidas del jardín).
+- 2-6: Hipnoseta (hace que el zombi que la coma pelee de tu lado).
+- 2-7: Seta miedica (dispara a larga distancia pero se esconde si el zombi se acerca).
+- 2-8: Setacongelada (congela temporalmente a todos los zombis en pantalla).
+- 2-9: Petaseta (gran explosión que deja un cráter inutilizable por un tiempo).
+
+**🏊 Etapa 3: La Piscina (Nivel 3)**
+
+- 3-1: Nenúfar (permite plantar plantas terrestres en el agua).
+- 3-2: Apisonaflor (aplasta al primer zombi que se acerque).
+- 3-3: Tripitidora (dispara guisantes en tres líneas distintas).
+- 3-4: Zampalga (arrastra a un zombi acuático al fondo de la piscina).
+- 3-6: Jalapeño (quema a todos los zombis en una línea entera y elimina el hielo).
+- 3-7: Pinchojedra (daña a los zombis que caminan sobre ella y pincha llantas).
+- 3-8: Plantorcha (enciende los guisantes comunes para duplicar su daño).
+- 3-9: Bipetadora (dispara hacia adelante y hacia atrás).
+
+**🌫️ Etapa 4: La Niebla (Nivel 4)**
+
+- 4-1: Planterna (ilumina el jardín y disipa la niebla de su alrededor).
+- 4-2: Cactus (dispara espinas y estira su tallo para derribar zombis en globo).
+- 4-3: Trebolador (sopla y elimina toda la niebla y zombis voladores de un mapa).
+- 4-4: Bipetadora / Dividida (dispara hacia adelante y atrás).
+- 4-6: Frustrella (dispara estrellas en 5 direcciones diferentes).
+- 4-7: Calabaza (protege a la planta que esté dentro de ella como una armadura).
+- 4-8: Magnetoseta (atrae y remueve objetos metálicos como cubos y cascos).
+- 4-9: Marseta (variante de la desesporada que solo se planta en agua).
+
+**🏠 Etapa 5: El Tejado (Nivel 5)**
+
+- 5-1: Colapulta (lanza coles parabólicamente superando la inclinación del tejado).
+- 5-2: Maceta (obligatoria para poder colocar plantas sobre las tejas del tejado).
+- 5-3: Lanzamaíz (lanza maíz y mantequilla que paraliza zombis).
+- 5-4: Grano de café (despierta instantáneamente a las setas de noche durante el día).
+- 5-6: Ajo (desvía a los zombis a las líneas de los lados al morderlo).
+- 5-7: Paraplanta (protege un área de 3×3 de zombis colgados y proyectiles de catapulta).
+- 5-8: Margarita (genera monedas de oro y plata de forma pasiva).
+- 5-9: Melonpulta (lanza melones pesados que infligen gran daño de impacto en área).
+
+**🏪 Plantas de la Tienda de Crazy Dave (mejoras)**
+
+Se compran con dinero del juego en el camión de Dave una vez desbloqueas las
+llantas y avanzas lo suficiente:
+
+1. Guisantralladora: se planta sobre la Repetidora (dispara 4 guisantes).
+2. Girasol Doble: se planta sobre el Girasol (otorga el doble de sol).
+3. Gasoseta: se planta sobre la Humoseta (ataca en ráfagas de 3×3 a su alrededor).
+4. Rabo de Gato: se planta sobre el Nenúfar (dispara espinas teledirigidas a cualquier línea).
+5. Melonpulta congelada: se planta sobre la Melonpulta (daño masivo en área y ralentiza).
+6. Imán Dorado: se planta sobre la Magnetoseta (recolecta monedas automáticamente).
+7. Pinchorroca: se planta sobre la Pinchojedra (soporta múltiples golpes de vehículos y Zombisteins).
+8. Cañón de Mazorca: se planta uniendo 2 Lanzamaíces horizontales (lanza misiles manuales tipo Petaseta).
+9. Imitadora: permite duplicar una tarjeta de semillas en la ranura para usarla el doble de rápido.
+
 ### Fase 0 — Assets (✅ completada)
 
 - [x] **P0** Reverse engineering de `main.pak`.
