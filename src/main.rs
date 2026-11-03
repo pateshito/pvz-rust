@@ -57,8 +57,14 @@ fn load_reanim_or_exit(label: &str, path: &Path) -> ReanimData {
 
 /// Carga el `.reanim` principal y, si la planta viene partida, une cuerpo y cabeza.
 fn load_plant(catalog: &EntityCatalog, entity: &str) -> ReanimData {
-    let mut data = load_reanim_or_exit(entity, &reanim_path(catalog, entity, entity));
-    if let Err(e) = plant_anim::apply(entity, entity, &mut data) {
+    load_plant_named(catalog, entity, entity)
+}
+
+/// Igual que `load_plant`, pero permite elegir otro `.reanim` de la misma
+/// entidad. Se usa para el Lanzaguisantes simple (`PeaShooterSingle`).
+fn load_plant_named(catalog: &EntityCatalog, entity: &str, reanim: &str) -> ReanimData {
+    let mut data = load_reanim_or_exit(entity, &reanim_path(catalog, entity, reanim));
+    if let Err(e) = plant_anim::apply(entity, reanim, &mut data) {
         eprintln!("{e}");
         std::process::exit(1);
     }
@@ -91,7 +97,7 @@ fn main() {
     );
 
     let zombie_data = load_reanim_or_exit("Zombie", &reanim_path(&catalog, "Zombie", "Zombie"));
-    let peashooter_data = load_plant(&catalog, "PeaShooter");
+    let peashooter_data = load_plant_named(&catalog, "PeaShooter", "PeaShooterSingle");
     let snowpea_data = load_plant(&catalog, "SnowPea");
     let sunflower_data = load_plant(&catalog, "SunFlower");
     let wallnut_data = load_plant(&catalog, "Wallnut");

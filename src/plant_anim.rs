@@ -4,8 +4,9 @@
 //! que ya traen el personaje entero en cada `anim_*` se quedan como las dejó
 //! el parser.
 //!
-//! - PeaShooter y SnowPea: `idle` (`anim_full_idle`) y `shooting` (tallo de
-//!   `anim_idle` + cabeza de `anim_shooting`). El balanceo sale de `anim_stem`.
+//! - PeaShooter (`PeaShooterSingle.reanim`), PeaShooter de la Repetidora y
+//!   SnowPea: `idle` (`anim_full_idle`) y `shooting` (tallo de `anim_idle` +
+//!   cabeza de `anim_shooting`). El balanceo sale de `anim_stem`.
 //! - GatlingPea: `idle` (tallo + cabeza en reposo) y `shooting`. El disparo
 //!   dura 39 frames y el tallo, de 25, se repite. El balanceo sale de `stalk_top`.
 //! - SplitPea: `idle`, `shooting` (dispara la de delante) y `back_shooting`
@@ -21,16 +22,18 @@ const SHOOTING: &str = "shooting";
 const BACK_SHOOTING: &str = "back_shooting";
 
 /// Aplica la receta de la planta cuando el archivo es el principal de la entidad.
-/// Una variante (por ejemplo `PeaShooterSingle`) se deja como viene.
+/// `PeaShooterSingle.reanim` es la variante simple del Lanzaguisantes y también
+/// se compone; el resto de variantes se dejan como vienen.
 pub fn apply(entity: &str, reanim: &str, data: &mut ReanimData) -> Result<(), String> {
-    if entity != reanim {
-        return Ok(());
-    }
-    let result = match entity {
-        "PeaShooter" | "SnowPea" => compose_standard(data, entity, &["anim_stem"]),
-        "GatlingPea" => compose_standard(data, entity, &["anim_stem", "stalk_top"]),
-        "SplitPea" => compose_split(data),
-        "ThreePeater" => compose_triple(data),
+    let result = match (entity, reanim) {
+        ("PeaShooter", "PeaShooterSingle") => {
+            compose_standard(data, "PeaShooterSingle", &["anim_stem"])
+        }
+        _ if entity != reanim => return Ok(()),
+        ("PeaShooter" | "SnowPea", _) => compose_standard(data, entity, &["anim_stem"]),
+        ("GatlingPea", _) => compose_standard(data, entity, &["anim_stem", "stalk_top"]),
+        ("SplitPea", _) => compose_split(data),
+        ("ThreePeater", _) => compose_triple(data),
         _ => Ok(()),
     };
     // Componer reemplaza los estados y se lleva el parpadeo que armó el parser.
@@ -578,17 +581,40 @@ mod tests {
     }
 
     #[test]
-    fn la_nuez_y_la_variante_del_lanzaguisantes_no_se_reescriben() {
+    fn la_nuez_no_se_reescribe() {
         let mut wall = load("animations/Wallnut/Wallnut.reanim");
         let before: Vec<String> = wall.states.iter().map(|s| s.name.clone()).collect();
         apply("Wallnut", "Wallnut", &mut wall).unwrap();
         let after: Vec<String> = wall.states.iter().map(|s| s.name.clone()).collect();
         assert_eq!(before, after);
+    }
 
+    #[test]
+    fn el_lanzaguisantes_simple_no_tiene_cejas_ni_tres_hojas() {
         let mut single = load("animations/PeaShooter/PeaShooterSingle.reanim");
         apply("PeaShooter", "PeaShooterSingle", &mut single).unwrap();
-        assert!(single.states.iter().any(|s| s.name == "anim_full_idle"));
-        assert!(single.states.iter().all(|s| s.name != "idle"));
+        assert_eq!(names(&single), ["idle", "shooting"]);
+        assert!(
+            single
+                .tracks
+                .iter()
+                .all(|track| track.name != "PeaShooter_eyebrow"),
+            "el Lanzaguisantes no lleva cejas"
+        );
+        assert!(
+            single
+                .tracks
+                .iter()
+                .all(|track| !track.name.contains("headleaf")),
+            "el Lanzaguisantes solo tiene una hoja"
+        );
+        assert!(
+            single
+                .tracks
+                .iter()
+                .any(|track| track.name == "anim_sprout"),
+            "el Lanzaguisantes conserva su brote"
+        );
     }
 
     #[test]
