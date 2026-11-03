@@ -98,10 +98,13 @@ fn main() {
 
     let zombie_data = load_reanim_or_exit("Zombie", &reanim_path(&catalog, "Zombie", "Zombie"));
     let peashooter_data = load_plant_named(&catalog, "PeaShooter", "PeaShooterSingle");
+    let repeater_data = load_plant(&catalog, "PeaShooter");
     let snowpea_data = load_plant(&catalog, "SnowPea");
     let sunflower_data = load_plant(&catalog, "SunFlower");
     let wallnut_data = load_plant(&catalog, "Wallnut");
     let potatomine_data = load_plant(&catalog, "PotatoMine");
+    let cherrybomb_data = load_plant(&catalog, "CherryBomb");
+    let chomper_data = load_plant(&catalog, "Chomper");
     let sun_data = load_reanim_or_exit("Sun", &reanim_path(&catalog, "Sun", "Sun"));
 
     let mut app = App::new();
@@ -121,10 +124,13 @@ fn main() {
     .insert_resource(CharacterLibraries {
         zombie: zombie_data,
         peashooter: peashooter_data,
+        repeater: repeater_data,
         snowpea: snowpea_data,
         sunflower: sunflower_data,
         wallnut: wallnut_data,
         potatomine: potatomine_data,
+        cherrybomb: cherrybomb_data,
+        chomper: chomper_data,
         sun: sun_data,
     })
     .insert_resource(GameCatalog(catalog))

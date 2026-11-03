@@ -6,7 +6,7 @@ use bevy::prelude::*;
 use bevy::render::view::RenderLayers;
 
 use crate::components::CharacterPart;
-use crate::game::defs::{plant_def, plant_unlock_level, PlantKind, ALL_PLANTS};
+use crate::game::defs::{plant_def, plant_unlock_level, PlantKind, ALL_PLANTS, MAX_LOADOUT};
 use crate::game::view::{self, PREVIEW_LAYER};
 use crate::resources::{CharacterLibraries, LevelProgress, PlantLoadout};
 use crate::AppState;
@@ -182,7 +182,7 @@ fn spawn_bank(root: &mut ChildBuilder, asset_server: &AssetServer, loadout: &Pla
         ImageNode::new(asset_server.load("images/SeedBank.png")),
     ))
     .with_children(|bank| {
-        for slot in 0..ALL_PLANTS.len() {
+        for slot in 0..MAX_LOADOUT {
             let equipped = slot < loadout.chosen.len();
             bank.spawn((
                 Button,
@@ -232,7 +232,7 @@ fn spawn_header(root: &mut ChildBuilder, unlocked: usize, loadout: &PlantLoadout
     ));
     root.spawn((
         Text::new(format!(
-            "Arriba: equipadas ({}/5) · Abajo: no elegidas · Desbloqueadas: {unlocked}/{}",
+            "Arriba: equipadas ({}/{MAX_LOADOUT}) · Abajo: no elegidas · Desbloqueadas: {unlocked}/{}",
             loadout.chosen.len(),
             ALL_PLANTS.len()
         )),

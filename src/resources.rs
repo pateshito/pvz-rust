@@ -1,5 +1,5 @@
 use crate::assets::catalog::EntityCatalog;
-use crate::game::defs::{plant_unlock_level, PlantKind};
+use crate::game::defs::{plant_unlock_level, PlantKind, MAX_LOADOUT};
 use crate::game::level::LEVEL_COUNT;
 use crate::reanim::ReanimData;
 use crate::Character;
@@ -13,10 +13,13 @@ pub struct GameCatalog(pub EntityCatalog);
 pub struct CharacterLibraries {
     pub zombie: ReanimData,
     pub peashooter: ReanimData,
+    pub repeater: ReanimData,
     pub snowpea: ReanimData,
     pub sunflower: ReanimData,
     pub wallnut: ReanimData,
     pub potatomine: ReanimData,
+    pub cherrybomb: ReanimData,
+    pub chomper: ReanimData,
     pub sun: ReanimData,
 }
 
@@ -31,10 +34,13 @@ impl CharacterLibraries {
     pub fn plant(&self, kind: PlantKind) -> &ReanimData {
         match kind {
             PlantKind::PeaShooter => &self.peashooter,
+            PlantKind::Repeater => &self.repeater,
             PlantKind::SnowPea => &self.snowpea,
             PlantKind::Sunflower => &self.sunflower,
             PlantKind::Wallnut => &self.wallnut,
             PlantKind::PotatoMine => &self.potatomine,
+            PlantKind::CherryBomb => &self.cherrybomb,
+            PlantKind::Chomper => &self.chomper,
         }
     }
 }
@@ -93,6 +99,9 @@ impl PlantLoadout {
             }
             self.chosen.remove(index);
         } else {
+            if self.chosen.len() >= MAX_LOADOUT {
+                return Err("Solo puedes llevar 5 plantas.");
+            }
             self.chosen.push(kind);
             self.chosen.sort_by_key(|plant| {
                 crate::game::defs::ALL_PLANTS
@@ -189,15 +198,37 @@ mod tests {
         assert!(!progress.plant_unlocked(PlantKind::Wallnut));
 
         progress.clear(0);
+        assert!(progress.plant_unlocked(PlantKind::CherryBomb));
         assert!(progress.plant_unlocked(PlantKind::Wallnut));
         assert!(!progress.plant_unlocked(PlantKind::SnowPea));
-
-        progress.clear(1);
-        assert!(progress.plant_unlocked(PlantKind::SnowPea));
         assert!(!progress.plant_unlocked(PlantKind::PotatoMine));
 
-        progress.clear(2);
+        progress.clear(1);
         assert!(progress.plant_unlocked(PlantKind::PotatoMine));
+        assert!(!progress.plant_unlocked(PlantKind::SnowPea));
+
+        progress.clear(2);
+        assert!(progress.plant_unlocked(PlantKind::SnowPea));
+        assert!(!progress.plant_unlocked(PlantKind::Chomper));
+
+        progress.clear(3);
+        assert!(progress.plant_unlocked(PlantKind::Chomper));
+        assert!(!progress.plant_unlocked(PlantKind::Repeater));
+
+        progress.clear(4);
+        assert!(progress.plant_unlocked(PlantKind::Repeater));
+    }
+
+    #[test]
+    fn el_equipamiento_no_pasa_de_cinco_plantas() {
+        let mut loadout = PlantLoadout::default();
+        assert_eq!(loadout.chosen.len(), 2);
+        assert!(loadout.toggle(PlantKind::CherryBomb).is_ok());
+        assert!(loadout.toggle(PlantKind::Wallnut).is_ok());
+        assert!(loadout.toggle(PlantKind::PotatoMine).is_ok());
+        assert_eq!(loadout.chosen.len(), MAX_LOADOUT);
+        assert!(loadout.toggle(PlantKind::SnowPea).is_err());
+        assert_eq!(loadout.chosen.len(), MAX_LOADOUT);
     }
 
     #[test]

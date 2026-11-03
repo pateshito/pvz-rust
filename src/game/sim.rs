@@ -66,8 +66,9 @@ pub struct Plant {
     /// Avance (0..1) del ciclo de disparo; `None` si no hay a quién disparar.
     pub shoot_phase: Option<f32>,
     /// Girasol: segundos hasta el próximo sol. Papa mina: segundos bajo tierra.
+    /// Petacereza: segundos hasta explotar. Planta carnívora: masticación restante.
     pub timer: f32,
-    /// La papa mina ya puede reventar.
+    /// La papa mina ya puede reventar; la planta carnívora está masticando.
     pub armed: bool,
 }
 
@@ -277,7 +278,11 @@ impl Sim {
             col,
             hp: def.max_hp,
             shoot_phase: None,
-            timer: def.producer.map(|p| p.first).unwrap_or(0.0),
+            timer: def
+                .producer
+                .map(|p| p.first)
+                .or(def.bomb.map(|b| b.fuse))
+                .unwrap_or(0.0),
             armed: false,
         });
         self.grid[row][col] = Some(id);
@@ -424,6 +429,8 @@ impl Sim {
         // (fila, x, daño, velocidad, segundos de hielo)
         let mut shots: Vec<(usize, f32, f32, f32, f32)> = Vec::new();
         let mut produced: Vec<(usize, usize, u32)> = Vec::new();
+        let mut detonations: Vec<(Id, usize, usize, f32, usize)> = Vec::new();
+        let mut eaten: Vec<Id> = Vec::new();
 
         for i in 0..self.plants.len() {
             let Plant { kind, row, col, .. } = self.plants[i];
@@ -446,13 +453,15 @@ impl Sim {
                     (true, Some(p)) => {
                         let next = p + dt / shooter.interval;
                         if p < shooter.fire_phase && next >= shooter.fire_phase {
-                            shots.push((
-                                row,
-                                cell_left(col) + PEA_START_DX,
-                                shooter.damage,
-                                shooter.pea_speed,
-                                shooter.chill,
-                            ));
+                            for shot in 0..shooter.shots.max(1) {
+                                shots.push((
+                                    row,
+                                    cell_left(col) + PEA_START_DX + shot as f32 * 24.0,
+                                    shooter.damage,
+                                    shooter.pea_speed,
+                                    shooter.chill,
+                                ));
+                            }
                         }
                         Some(if next >= 1.0 { next - 1.0 } else { next })
                     }
@@ -475,6 +484,30 @@ impl Sim {
                     if plant.timer >= mine.arm_time {
                         plant.armed = true;
                     }
+                }
+            }
+
+            if let Some(bomb) = def.bomb {
+                let plant = &mut self.plants[i];
+                plant.timer -= dt;
+                if plant.timer <= 0.0 {
+                    detonations.push((plant.id, plant.row, plant.col, bomb.damage, bomb.radius));
+                }
+            }
+
+            if let Some(chomper) = def.chomper {
+                if self.plants[i].armed {
+                    let plant = &mut self.plants[i];
+                    plant.timer = (plant.timer - dt).max(0.0);
+                    if plant.timer <= 0.0 {
+                        plant.armed = false;
+                    }
+                } else if let Some(index) = self.zombie_on_cell(row, col) {
+                    let zombie_id = self.zombies[index].id;
+                    let plant = &mut self.plants[i];
+                    plant.armed = true;
+                    plant.timer = chomper.chew_time;
+                    eaten.push(zombie_id);
                 }
             }
         }
@@ -519,6 +552,33 @@ impl Sim {
         for (plant_id, zombie_id, damage) in blasts {
             if let Some(zombie) = self.zombies.iter_mut().find(|z| z.id == zombie_id) {
                 zombie.hp -= damage;
+            }
+            if let Some(index) = self.plants.iter().position(|p| p.id == plant_id) {
+                let plant = self.plants.remove(index);
+                self.grid[plant.row][plant.col] = None;
+                self.events.push(SimEvent::PlantDied(plant.id));
+            }
+        }
+
+        // La planta carnívora devora al zombie que tiene en su celda.
+        for zombie_id in eaten {
+            if let Some(zombie) = self.zombies.iter_mut().find(|z| z.id == zombie_id) {
+                zombie.hp = 0.0;
+            }
+        }
+
+        // La petacereza daña a todos los zombies del área 3x3 y desaparece.
+        for (plant_id, row, col, damage, radius) in detonations {
+            let left = cell_left(col.saturating_sub(radius));
+            let right = cell_left((col + radius).min(COLS - 1)) + CELL_W;
+            for zombie in &mut self.zombies {
+                if !zombie.is_alive() || zombie.row.abs_diff(row) > radius {
+                    continue;
+                }
+                let zd = zombie_def(zombie.kind);
+                if zombie.x + zd.hit_right > left && zombie.x < right {
+                    zombie.hp -= damage;
+                }
             }
             if let Some(index) = self.plants.iter().position(|p| p.id == plant_id) {
                 let plant = self.plants.remove(index);
@@ -1102,6 +1162,66 @@ mod tests {
         assert!(sim.take_events().contains(&SimEvent::PlantDied(plant)));
         assert!(sim.zombies[0].hp <= 0.0);
         assert!(!sim.zombies[0].is_alive());
+    }
+
+    #[test]
+    fn la_repetidora_dispara_dos_guisantes() {
+        let mut sim = Sim::new(level_with(PlantKind::Repeater), 1);
+        sim.plant(PlantKind::Repeater, 0, 0).unwrap();
+        let zombie = place_zombie(&mut sim, 0, 500.0);
+        sim.zombies[0].hp = 1.0e9;
+        run(&mut sim, 0.8);
+        assert_eq!(sim.peas.len(), 2, "salen dos guisantes por disparo");
+        assert_eq!(
+            sim.peas.iter().filter(|pea| pea.row == 0).count(),
+            2,
+            "los dos van por la fila del zombie"
+        );
+        assert!(sim.zombies.iter().any(|z| z.id == zombie));
+    }
+
+    #[test]
+    fn la_petacereza_revienta_el_area_3x3() {
+        let mut sim = Sim::new(level_with(PlantKind::CherryBomb), 1);
+        let plant = sim.plant(PlantKind::CherryBomb, 2, 3).unwrap();
+        let near_top = place_zombie(&mut sim, 1, 300.0);
+        let near_mid = place_zombie(&mut sim, 2, 300.0);
+        let near_bottom = place_zombie(&mut sim, 3, 300.0);
+        let far = place_zombie(&mut sim, 3, 500.0);
+        for zombie in &mut sim.zombies {
+            zombie.speed_mul = 0.0;
+        }
+
+        run(&mut sim, 1.3);
+        assert!(sim.plants.iter().all(|p| p.id != plant));
+        assert!(sim.take_events().contains(&SimEvent::PlantDied(plant)));
+        for id in [near_top, near_mid, near_bottom] {
+            let zombie = sim.zombies.iter().find(|z| z.id == id).unwrap();
+            assert!(zombie.hp <= 0.0, "el área alcanza al zombie {id}");
+        }
+        let far = sim.zombies.iter().find(|z| z.id == far).unwrap();
+        assert!(far.hp > 0.0, "fuera del área no recibe daño");
+    }
+
+    #[test]
+    fn la_planta_carnivora_devora_y_luego_mastica() {
+        let mut sim = Sim::new(level_with(PlantKind::Chomper), 1);
+        let plant = sim.plant(PlantKind::Chomper, 0, 2).unwrap();
+        let zombie = place_zombie(&mut sim, 0, 250.0);
+        sim.zombies[0].speed_mul = 0.0;
+
+        run(&mut sim, 0.1);
+        assert!(
+            !sim.zombies.iter().any(|z| z.id == zombie && z.is_alive()),
+            "se come al zombie de su celda"
+        );
+        let chomper = sim.plants.iter().find(|p| p.id == plant).unwrap();
+        assert!(chomper.armed, "queda masticando");
+        assert!(chomper.timer > 0.0);
+
+        run(&mut sim, 43.0);
+        let chomper = sim.plants.iter().find(|p| p.id == plant).unwrap();
+        assert!(!chomper.armed, "vuelve a estar lista");
     }
 
     #[test]

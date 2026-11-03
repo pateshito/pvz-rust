@@ -3,11 +3,14 @@
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum PlantKind {
-    Sunflower,
     PeaShooter,
-    SnowPea,
+    Sunflower,
+    CherryBomb,
     Wallnut,
     PotatoMine,
+    SnowPea,
+    Chomper,
+    Repeater,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -15,23 +18,31 @@ pub enum ZombieKind {
     Basic,
 }
 
-/// Todas las plantas que puede mostrar el selector.
-pub const ALL_PLANTS: [PlantKind; 5] = [
-    PlantKind::Sunflower,
+/// Todas las plantas que puede mostrar el selector, en el orden de la etapa 1.
+pub const ALL_PLANTS: [PlantKind; 8] = [
     PlantKind::PeaShooter,
+    PlantKind::Sunflower,
+    PlantKind::CherryBomb,
     PlantKind::Wallnut,
-    PlantKind::SnowPea,
     PlantKind::PotatoMine,
+    PlantKind::SnowPea,
+    PlantKind::Chomper,
+    PlantKind::Repeater,
 ];
 
-/// Nivel (0-based) que hay que completar para desbloquear la planta.
+/// Sobres que caben en el banco de semillas junto a la pala.
+pub const MAX_LOADOUT: usize = 5;
+
+/// Planta que hay que completar para desbloquear cada una.
 /// `None` significa disponible desde el principio.
 pub fn plant_unlock_level(kind: PlantKind) -> Option<usize> {
     match kind {
-        PlantKind::Sunflower | PlantKind::PeaShooter => None,
-        PlantKind::Wallnut => Some(0),
-        PlantKind::SnowPea => Some(1),
-        PlantKind::PotatoMine => Some(2),
+        PlantKind::PeaShooter | PlantKind::Sunflower => None,
+        PlantKind::CherryBomb | PlantKind::Wallnut => Some(0),
+        PlantKind::PotatoMine => Some(1),
+        PlantKind::SnowPea => Some(2),
+        PlantKind::Chomper => Some(3),
+        PlantKind::Repeater => Some(4),
     }
 }
 
@@ -47,6 +58,8 @@ pub struct ShooterDef {
     pub pea_speed: f32,
     /// Segundos que el impacto deja al zombie a media velocidad. 0 = guisante normal.
     pub chill: f32,
+    /// Guisantes que salen en cada disparo.
+    pub shots: u8,
     /// Imagen del proyectil, relativa a `assets/`.
     pub projectile: &'static str,
 }
@@ -69,6 +82,23 @@ pub struct MineDef {
     pub damage: f32,
 }
 
+/// Petacereza: mecha corta y explosión en área.
+#[derive(Clone, Copy, Debug)]
+pub struct BombDef {
+    /// Segundos desde que se planta hasta que explota.
+    pub fuse: f32,
+    pub damage: f32,
+    /// Radio en celdas. 1 equivale a un área de 3x3.
+    pub radius: usize,
+}
+
+/// Planta carnívora: devora a un zombie y se queda masticando.
+#[derive(Clone, Copy, Debug)]
+pub struct ChomperDef {
+    /// Segundos que tarda en tragar antes de poder volver a morder.
+    pub chew_time: f32,
+}
+
 #[derive(Clone, Copy, Debug)]
 pub struct PlantDef {
     pub kind: PlantKind,
@@ -82,6 +112,8 @@ pub struct PlantDef {
     pub shooter: Option<ShooterDef>,
     pub producer: Option<ProducerDef>,
     pub mine: Option<MineDef>,
+    pub bomb: Option<BombDef>,
+    pub chomper: Option<ChomperDef>,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -103,66 +135,126 @@ pub struct ZombieDef {
 }
 
 pub fn plant_def(kind: PlantKind) -> PlantDef {
-    let (name, cost, cooldown, max_hp, entity, shooter, producer, mine) = match kind {
-        PlantKind::Sunflower => (
-            "Girasol",
-            50,
-            7.5,
-            300.0,
-            "SunFlower",
-            None,
-            Some(ProducerDef {
+    let basic_pea = Some(pea(0.0, "images/ProjectilePea.png"));
+    match kind {
+        PlantKind::Sunflower => PlantDef {
+            kind,
+            name: "Girasol",
+            cost: 50,
+            cooldown: 7.5,
+            max_hp: 300.0,
+            entity: "SunFlower",
+            shooter: None,
+            producer: Some(ProducerDef {
                 first: 7.5,
                 interval: 24.0,
                 value: 25,
             }),
-            None,
-        ),
-        PlantKind::PeaShooter => (
-            "Lanzaguisantes",
-            100,
-            7.5,
-            300.0,
-            "PeaShooter",
-            Some(pea(0.0, "images/ProjectilePea.png")),
-            None,
-            None,
-        ),
-        PlantKind::SnowPea => (
-            "Lanzaguisantes de hielo",
-            175,
-            7.5,
-            300.0,
-            "SnowPea",
-            Some(pea(10.0, "images/ProjectileSnowPea.png")),
-            None,
-            None,
-        ),
-        PlantKind::Wallnut => ("Nuez", 50, 30.0, 4000.0, "Wallnut", None, None, None),
-        PlantKind::PotatoMine => (
-            "Papa mina",
-            25,
-            30.0,
-            300.0,
-            "PotatoMine",
-            None,
-            None,
-            Some(MineDef {
+            mine: None,
+            bomb: None,
+            chomper: None,
+        },
+        PlantKind::PeaShooter => PlantDef {
+            kind,
+            name: "Lanzaguisantes",
+            cost: 100,
+            cooldown: 7.5,
+            max_hp: 300.0,
+            entity: "PeaShooter",
+            shooter: basic_pea,
+            producer: None,
+            mine: None,
+            bomb: None,
+            chomper: None,
+        },
+        PlantKind::CherryBomb => PlantDef {
+            kind,
+            name: "Petacereza",
+            cost: 150,
+            cooldown: 50.0,
+            max_hp: 300.0,
+            entity: "CherryBomb",
+            shooter: None,
+            producer: None,
+            mine: None,
+            bomb: Some(BombDef {
+                fuse: 1.2,
+                damage: 1800.0,
+                radius: 1,
+            }),
+            chomper: None,
+        },
+        PlantKind::Wallnut => PlantDef {
+            kind,
+            name: "Nuez",
+            cost: 50,
+            cooldown: 30.0,
+            max_hp: 4000.0,
+            entity: "Wallnut",
+            shooter: None,
+            producer: None,
+            mine: None,
+            bomb: None,
+            chomper: None,
+        },
+        PlantKind::PotatoMine => PlantDef {
+            kind,
+            name: "Papa mina",
+            cost: 25,
+            cooldown: 30.0,
+            max_hp: 300.0,
+            entity: "PotatoMine",
+            shooter: None,
+            producer: None,
+            mine: Some(MineDef {
                 arm_time: 15.0,
                 damage: 1800.0,
             }),
-        ),
-    };
-    PlantDef {
-        kind,
-        name,
-        cost,
-        cooldown,
-        max_hp,
-        entity,
-        shooter,
-        producer,
-        mine,
+            bomb: None,
+            chomper: None,
+        },
+        PlantKind::SnowPea => PlantDef {
+            kind,
+            name: "Lanzaguisantes de hielo",
+            cost: 175,
+            cooldown: 7.5,
+            max_hp: 300.0,
+            entity: "SnowPea",
+            shooter: Some(pea(10.0, "images/ProjectileSnowPea.png")),
+            producer: None,
+            mine: None,
+            bomb: None,
+            chomper: None,
+        },
+        PlantKind::Chomper => PlantDef {
+            kind,
+            name: "Planta carnívora",
+            cost: 150,
+            cooldown: 7.5,
+            max_hp: 300.0,
+            entity: "Chomper",
+            shooter: None,
+            producer: None,
+            mine: None,
+            bomb: None,
+            chomper: Some(ChomperDef { chew_time: 42.0 }),
+        },
+        PlantKind::Repeater => PlantDef {
+            kind,
+            name: "Repetidora",
+            cost: 200,
+            cooldown: 7.5,
+            max_hp: 300.0,
+            entity: "PeaShooter",
+            shooter: Some(ShooterDef {
+                shots: 2,
+                ..pea(0.0, "images/ProjectilePea.png")
+            }),
+            producer: None,
+            mine: None,
+            bomb: None,
+            chomper: None,
+        },
     }
 }
 
@@ -173,6 +265,7 @@ fn pea(chill: f32, projectile: &'static str) -> ShooterDef {
         damage: 20.0,
         pea_speed: 333.0,
         chill,
+        shots: 1,
         projectile,
     }
 }

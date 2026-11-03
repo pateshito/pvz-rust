@@ -925,7 +925,7 @@ fn pose_children(
 
 fn plant_frame(data: &ReanimData, plant: &crate::game::sim::Plant, clock: f32) -> (usize, usize) {
     match plant.kind {
-        PlantKind::PeaShooter | PlantKind::SnowPea => {
+        PlantKind::PeaShooter | PlantKind::SnowPea | PlantKind::Repeater => {
             if let Some(phase) = plant.shoot_phase {
                 let len = frame_len(data, STATE_SHOOTING) as f32;
                 frame_in(
@@ -941,6 +941,8 @@ fn plant_frame(data: &ReanimData, plant: &crate::game::sim::Plant, clock: f32) -
         PlantKind::Sunflower => frame_in(data, "full", (clock * data.fps) as usize, true),
         PlantKind::Wallnut => frame_in(data, "anim_idle", (clock * data.fps) as usize, true),
         PlantKind::PotatoMine => potato_frame(data, plant, clock),
+        PlantKind::CherryBomb => cherry_frame(data, plant, clock),
+        PlantKind::Chomper => chomper_frame(data, plant, clock),
     }
 }
 
@@ -961,6 +963,41 @@ fn potato_frame(data: &ReanimData, plant: &crate::game::sim::Plant, clock: f32) 
         let local = ((rise_time - until_arm) / rise_time * rise_len as f32) as usize;
         frame_in(data, "anim_rise", local, false)
     }
+}
+
+/// La petacereza espera en `anim_idle` y enciende la mecha con `anim_explode`.
+fn cherry_frame(data: &ReanimData, plant: &crate::game::sim::Plant, clock: f32) -> (usize, usize) {
+    let explode_len = frame_len(data, "anim_explode") as f32;
+    let explode_time = explode_len / data.fps.max(1.0);
+    if plant.timer <= explode_time {
+        let elapsed = (explode_time - plant.timer).max(0.0);
+        let local = (elapsed * data.fps.max(1.0)) as usize;
+        frame_in(data, "anim_explode", local, false)
+    } else {
+        frame_in(data, "anim_idle", (clock * data.fps) as usize, true)
+    }
+}
+
+/// La planta carnívora muerde, traga y mastica; mientras tanto es vulnerable.
+fn chomper_frame(data: &ReanimData, plant: &crate::game::sim::Plant, clock: f32) -> (usize, usize) {
+    if !plant.armed {
+        return frame_in(data, "anim_idle", (clock * data.fps) as usize, true);
+    }
+    let chew_time = plant_def(plant.kind)
+        .chomper
+        .map_or(42.0, |chomper| chomper.chew_time);
+    let elapsed = (chew_time - plant.timer).max(0.0);
+    let (state, local) = if elapsed < 1.0 {
+        ("anim_bite", (elapsed * data.fps.max(1.0)) as usize)
+    } else if elapsed < 2.5 {
+        (
+            "anim_swallow",
+            ((elapsed - 1.0) * data.fps.max(1.0)) as usize,
+        )
+    } else {
+        ("anim_chew", ((elapsed - 2.5) * data.fps.max(1.0)) as usize)
+    };
+    frame_in(data, state, local, state == "anim_chew")
 }
 
 fn zombie_frame(
@@ -1222,9 +1259,10 @@ fn seed_tint(status: SeedStatus) -> Color {
 /// La papa es el montículo de `anim_idle`, no la cara suelta.
 fn preview_state(kind: PlantKind) -> &'static str {
     match kind {
-        PlantKind::PeaShooter | PlantKind::SnowPea => STATE_IDLE,
+        PlantKind::PeaShooter | PlantKind::SnowPea | PlantKind::Repeater => STATE_IDLE,
         PlantKind::Sunflower => "full",
         PlantKind::Wallnut | PlantKind::PotatoMine => "anim_idle",
+        PlantKind::CherryBomb | PlantKind::Chomper => "anim_idle",
     }
 }
 
@@ -1713,13 +1751,7 @@ mod tests {
 
     #[test]
     fn el_reposo_del_sobre_entra_en_el_icono() {
-        for kind in [
-            PlantKind::Sunflower,
-            PlantKind::PeaShooter,
-            PlantKind::SnowPea,
-            PlantKind::Wallnut,
-            PlantKind::PotatoMine,
-        ] {
+        for kind in crate::game::defs::ALL_PLANTS {
             let def = plant_def(kind);
             let data = load(def.entity);
             let state = preview_state(kind);
