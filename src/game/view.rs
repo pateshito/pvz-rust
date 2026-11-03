@@ -16,7 +16,7 @@ use crate::components::CharacterPart;
 use crate::game::board::{
     cell_at, cell_left, cell_top, screen_to_world, CELL_H, CELL_W, SCREEN_H, SCREEN_W,
 };
-use crate::game::defs::{plant_def, zombie_def, PlantKind};
+use crate::game::defs::{plant_def, plant_unlocked_by_level, zombie_def, PlantKind};
 use crate::game::level::Level;
 use crate::game::sim::{
     Id, Outcome, SeedStatus, Sim, SimEvent, ZombieStatus, PEA_WIDTH, PEA_Y_OFFSET,
@@ -49,6 +49,8 @@ const SHOVEL_W: f32 = 70.0;
 const SHOVEL_H: f32 = 72.0;
 const SHOVEL_X: f32 = BANK_X + BANK_W - 14.0 - SHOVEL_W;
 const SHOVEL_Y: f32 = BANK_Y + (BANK_H - SHOVEL_H) * 0.5;
+/// Sobre que aparece al ganar un nivel y desbloquear una planta.
+const UNLOCK_TOP: f32 = 250.0;
 /// Origen del `.reanim` dentro de la celda. El lanzaguisantes en reposo, con el
 /// ancla arriba a la izquierda, ocupa unos x 6..81 y 10..79: el centro visual
 /// cae en (44, 45). La celda mide 80×100, así que el origen va en (-4, 6).
@@ -127,6 +129,21 @@ struct CursorShovel;
 #[derive(Component)]
 struct Banner;
 
+/// Sobre que crece al terminar el nivel. `elapsed` empieza en 0.
+#[derive(Component)]
+struct UnlockPack {
+    elapsed: f32,
+}
+
+/// Modelo de la planta dentro del sobre de desbloqueo. Guarda la pose final
+/// para encogerlo hacia el centro mientras crece.
+#[derive(Component)]
+struct UnlockIcon {
+    elapsed: f32,
+    base: Transform,
+    center: Vec2,
+}
+
 #[derive(Resource)]
 struct Match(Sim);
 
@@ -183,7 +200,14 @@ pub fn register(app: &mut App) {
         .add_systems(OnExit(AppState::Play), cleanup)
         .add_systems(
             Update,
-            (input, simulate, sync_hand, apply_deferred, animate)
+            (
+                input,
+                simulate,
+                sync_hand,
+                apply_deferred,
+                animate,
+                animate_unlock,
+            )
                 .chain()
                 .run_if(in_state(AppState::Play)),
         );
@@ -553,11 +577,21 @@ fn simulate(
     }
 
     if sim.0.outcome != Outcome::Playing && !control.banner {
+        let newly_unlocked = (sim.0.outcome == Outcome::Won
+            && !progress.is_cleared(progress.selected))
+        .then(|| plant_unlocked_by_level(progress.selected))
+        .flatten();
         if sim.0.outcome == Outcome::Won {
             let selected = progress.selected;
             progress.clear(selected);
         }
-        spawn_banner(&mut commands, sim.0.outcome);
+        spawn_banner(
+            &mut commands,
+            &asset_server,
+            &libraries,
+            sim.0.outcome,
+            newly_unlocked,
+        );
         control.banner = true;
     }
 
@@ -1645,7 +1679,13 @@ fn fresh_control() -> PlayControl {
     }
 }
 
-fn spawn_banner(commands: &mut Commands, outcome: Outcome) {
+fn spawn_banner(
+    commands: &mut Commands,
+    asset_server: &AssetServer,
+    libraries: &CharacterLibraries,
+    outcome: Outcome,
+    unlocked: Option<PlantKind>,
+) {
     let title = match outcome {
         Outcome::Won => "El jardín está a salvo",
         Outcome::Lost => "Los zombies llegaron a la casa",
@@ -1659,8 +1699,6 @@ fn spawn_banner(commands: &mut Commands, outcome: Outcome) {
                 top: Val::Px(0.0),
                 width: Val::Percent(100.0),
                 height: Val::Percent(100.0),
-                align_items: AlignItems::Center,
-                justify_content: JustifyContent::Center,
                 ..default()
             },
             BackgroundColor(Color::srgba(0.0, 0.0, 0.0, 0.45)),
@@ -1669,11 +1707,160 @@ fn spawn_banner(commands: &mut Commands, outcome: Outcome) {
         ))
         .with_children(|parent| {
             parent.spawn((
-                Text::new(format!("{title}\nR: reiniciar    Esc: niveles")),
+                Text::new(title),
+                Node {
+                    position_type: PositionType::Absolute,
+                    left: Val::Px(0.0),
+                    top: Val::Px(168.0),
+                    width: Val::Percent(100.0),
+                    justify_content: JustifyContent::Center,
+                    ..default()
+                },
                 TextFont::from_font_size(32.0),
                 TextColor(Color::srgb(0.98, 0.95, 0.75)),
+                TextLayout::new_with_justify(JustifyText::Center),
+            ));
+
+            if let Some(kind) = unlocked {
+                parent.spawn((
+                    Text::new("¡Nueva planta desbloqueada!"),
+                    Node {
+                        position_type: PositionType::Absolute,
+                        left: Val::Px(0.0),
+                        top: Val::Px(214.0),
+                        width: Val::Percent(100.0),
+                        justify_content: JustifyContent::Center,
+                        ..default()
+                    },
+                    TextFont::from_font_size(18.0),
+                    TextColor(Color::srgb(0.98, 0.82, 0.40)),
+                    TextLayout::new_with_justify(JustifyText::Center),
+                ));
+                parent.spawn((
+                    ImageNode::new(asset_server.load("images/SeedPacket_Larger.png")),
+                    Node {
+                        position_type: PositionType::Absolute,
+                        left: Val::Px(unlock_left()),
+                        top: Val::Px(UNLOCK_TOP),
+                        width: Val::Px(PACKET_W),
+                        height: Val::Px(PACKET_H),
+                        border: UiRect::all(Val::Px(2.0)),
+                        ..default()
+                    },
+                    BorderColor(Color::srgb(0.88, 0.78, 0.32)),
+                    UnlockPack { elapsed: 0.0 },
+                ));
+                parent.spawn((
+                    Text::new(plant_def(kind).name),
+                    Node {
+                        position_type: PositionType::Absolute,
+                        left: Val::Px(0.0),
+                        top: Val::Px(UNLOCK_TOP + PACKET_H + 10.0),
+                        width: Val::Percent(100.0),
+                        justify_content: JustifyContent::Center,
+                        ..default()
+                    },
+                    TextFont::from_font_size(20.0),
+                    TextColor(Color::WHITE),
+                    TextLayout::new_with_justify(JustifyText::Center),
+                ));
+            }
+
+            parent.spawn((
+                Text::new("R: reiniciar    Esc: niveles"),
+                Node {
+                    position_type: PositionType::Absolute,
+                    left: Val::Px(0.0),
+                    top: Val::Px(548.0),
+                    width: Val::Percent(100.0),
+                    justify_content: JustifyContent::Center,
+                    ..default()
+                },
+                TextFont::from_font_size(18.0),
+                TextColor(Color::srgb(0.90, 0.92, 0.82)),
+                TextLayout::new_with_justify(JustifyText::Center),
             ));
         });
+
+    if let Some(kind) = unlocked {
+        let def = plant_def(kind);
+        let bounds = idle_bounds(libraries.plant(kind), def.entity, preview_state(kind)).unwrap_or(
+            ScreenBox {
+                min_x: 0.0,
+                min_y: 0.0,
+                max_x: 70.0,
+                max_y: 70.0,
+            },
+        );
+        let target = ScreenBox {
+            min_x: unlock_left() + ICON_INSET_X,
+            min_y: UNLOCK_TOP + ICON_TOP,
+            max_x: unlock_left() + PACKET_W - ICON_INSET_X,
+            max_y: UNLOCK_TOP + PACKET_H - ICON_TOP - ICON_BOTTOM,
+        };
+        let (scale, root) = fit_box(target, bounds);
+        let (x, y) = screen_to_world(root.x, root.y);
+        let base = Transform::from_xyz(x, y, 20.0).with_scale(Vec3::new(scale, scale, 1.0));
+        let (cx, cy) = screen_to_world(
+            (target.min_x + target.max_x) * 0.5,
+            (target.min_y + target.max_y) * 0.5,
+        );
+        let icon = spawn_plant_icon(
+            commands,
+            asset_server,
+            libraries,
+            kind,
+            (target.min_x, target.min_y, target.max_x, target.max_y),
+            20.0,
+        );
+        commands.entity(icon).insert((
+            PlayPiece,
+            Banner,
+            UnlockIcon {
+                elapsed: 0.0,
+                base,
+                center: Vec2::new(cx, cy),
+            },
+        ));
+    }
+}
+
+fn unlock_left() -> f32 {
+    (SCREEN_W - PACKET_W) * 0.5
+}
+
+/// El sobre de desbloqueo crece con un pequeño rebote y el modelo lo acompaña
+/// encogiéndose hacia el centro del sobre.
+fn animate_unlock(
+    time: Res<Time>,
+    mut packs: Query<(&mut UnlockPack, &mut Node, &mut ImageNode)>,
+    mut icons: Query<(&mut UnlockIcon, &mut Transform)>,
+) {
+    let dt = time.delta_secs();
+    for (mut pack, mut node, mut image) in &mut packs {
+        pack.elapsed += dt;
+        let t = (pack.elapsed / 0.55).clamp(0.0, 1.0);
+        let grow = ease_out_back(t).max(0.0);
+        node.width = Val::Px(PACKET_W * grow);
+        node.height = Val::Px(PACKET_H * grow);
+        image.color = Color::srgba(1.0, 1.0, 1.0, t.min(1.0));
+    }
+    for (mut icon, mut transform) in &mut icons {
+        icon.elapsed += dt;
+        let t = (icon.elapsed / 0.55).clamp(0.0, 1.0);
+        let grow = ease_out_back(t).max(0.0);
+        let base = icon.base.translation.truncate();
+        let center = icon.center;
+        let position = center + (base - center) * grow;
+        transform.translation = Vec3::new(position.x, position.y, icon.base.translation.z);
+        transform.scale = icon.base.scale * grow;
+    }
+}
+
+fn ease_out_back(t: f32) -> f32 {
+    const C1: f32 = 1.70158;
+    const C3: f32 = C1 + 1.0;
+    1.0 + C3 * (t - 1.0).powi(3) + C1 * (t - 1.0).powi(2)
 }
 
 fn cursor_on_board(window: Option<&Window>) -> Option<Vec2> {
