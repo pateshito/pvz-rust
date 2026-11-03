@@ -74,6 +74,40 @@ pub struct GroupSample {
     pub dx: Vec<f32>,
 }
 
+/// Cabeza que el párpado debe seguir. El `.reanim` guarda el párpado en
+/// coordenadas absolutas, así que sin esto los ojos se quedan quietos mientras
+/// la cabeza se balancea.
+#[derive(Clone, Debug)]
+pub struct FollowHead {
+    /// Track de la cabeza.
+    pub track: usize,
+    /// Frame de la cabeza para el que se dibujó el párpado.
+    pub reference: usize,
+}
+
+/// Ajuste de un párpado para seguir el frame actual de la cabeza.
+#[derive(Clone, Copy, Debug)]
+pub struct FollowAdjust {
+    pub dx: f32,
+    pub dy: f32,
+    pub sx: f32,
+    pub sy: f32,
+    /// La cabeza no se ve en este frame: el párpado tampoco.
+    pub visible: bool,
+}
+
+impl FollowAdjust {
+    fn hidden() -> Self {
+        Self {
+            dx: 0.0,
+            dy: 0.0,
+            sx: 1.0,
+            sy: 1.0,
+            visible: false,
+        }
+    }
+}
+
 /// Un parpadeo dibujado encima de un estado. El cuerpo sigue en el frame del
 /// reposo; estos tracks se leen del clip y tapan los ojos abiertos.
 #[derive(Clone, Debug)]
@@ -86,6 +120,8 @@ pub struct BlinkClip {
     pub tracks: Vec<usize>,
     /// Ojos sueltos que se ocultan mientras el párpado de este clip está visible.
     pub hide: Vec<usize>,
+    /// Cabeza a la que pertenece el párpado, si se puede identificar.
+    pub follow: Option<FollowHead>,
 }
 
 /// Segundos de reposo entre un parpadeo y el siguiente.
@@ -191,6 +227,42 @@ impl AnimState {
         } else {
             None
         }
+    }
+
+    /// Desplazamiento y escala que hay que sumar al párpado para que siga la
+    /// cabeza en el frame `local`. `None` si el clip no tiene cabeza asociada.
+    pub fn blink_follow(
+        &self,
+        data: &ReanimData,
+        blink: (usize, usize),
+        local: usize,
+    ) -> Option<FollowAdjust> {
+        let clip = self.blinks.get(blink.0)?;
+        let follow = clip.follow.as_ref()?;
+        let head = data.tracks.get(follow.track)?;
+        let (frame, _) = self.sample(head.group, local);
+        let Some(now) = head.frames.get(frame).and_then(|r| r.as_ref()) else {
+            return Some(FollowAdjust::hidden());
+        };
+        if !now.active {
+            return Some(FollowAdjust::hidden());
+        }
+        let reference = head.frames.get(follow.reference).and_then(|r| r.as_ref())?;
+        Some(FollowAdjust {
+            dx: now.x - reference.x,
+            dy: now.y - reference.y,
+            sx: if reference.sx != 0.0 {
+                now.sx / reference.sx
+            } else {
+                1.0
+            },
+            sy: if reference.sy != 0.0 {
+                now.sy / reference.sy
+            } else {
+                1.0
+            },
+            visible: true,
+        })
     }
 
     /// Frame de origen y desplazamiento horizontal de `group` en el frame `local`
@@ -432,6 +504,64 @@ fn is_detail(name: &str) -> bool {
 fn is_eye_track(name: &str) -> bool {
     let n = name.to_ascii_lowercase();
     n.contains("eye") && !n.contains("brow") && !n.contains("blink")
+}
+
+/// Track que dibuja la cabeza (no una hoja de la cabeza ni una cabeza interna).
+fn has_head_image(track: &Track) -> bool {
+    track
+        .frames
+        .iter()
+        .flatten()
+        .filter_map(|r| r.image.as_deref())
+        .any(|image| {
+            let image = image.to_ascii_uppercase();
+            image.contains("_HEAD") && !image.contains("HEADLEAF") && !image.contains("HEAD_INNER")
+        })
+}
+
+/// Cabeza única del estado que el párpado debe seguir, y frame de referencia
+/// donde el `.reanim` dibujó el párpado. Con varias cabezas no se adivina.
+fn head_follow(data: &ReanimData, state: &AnimState, clip: &RawClip) -> Option<FollowHead> {
+    let frames = host_frames(state);
+    let heads: Vec<usize> = data
+        .tracks
+        .iter()
+        .enumerate()
+        .filter(|(_, track)| track.has_image && has_head_image(track))
+        .filter(|(_, track)| frames.iter().any(|&f| frame_on(track, f)))
+        .map(|(index, _)| index)
+        .collect();
+    if heads.len() != 1 {
+        return None;
+    }
+    let track = heads[0];
+    let (ref_x, ref_y) = clip.tracks.iter().find_map(|&ti| {
+        (clip.start..=clip.end).find_map(|f| {
+            let r = data.tracks.get(ti)?.frames.get(f)?.as_ref()?;
+            (r.active && r.image.is_some()).then_some((r.x, r.y))
+        })
+    })?;
+    let reference = frames
+        .iter()
+        .copied()
+        .filter(|&f| frame_on(&data.tracks[track], f))
+        .min_by(|&a, &b| {
+            head_distance(&data.tracks[track], a, ref_x, ref_y).total_cmp(&head_distance(
+                &data.tracks[track],
+                b,
+                ref_x,
+                ref_y,
+            ))
+        })?;
+    Some(FollowHead { track, reference })
+}
+
+fn head_distance(track: &Track, frame: usize, x: f32, y: f32) -> f32 {
+    track
+        .frames
+        .get(frame)
+        .and_then(|r| r.as_ref())
+        .map_or(f32::INFINITY, |r| (r.x - x).powi(2) + (r.y - y).powi(2))
 }
 
 /// Reposo, o la papa ya armada: ahí es donde el personaje se queda quieto.
@@ -788,11 +918,13 @@ pub fn fold_blinks(data: &mut ReanimData) {
             })
             .map(|(i, _)| i)
             .collect();
+        let follow = head_follow(data, &data.states[index], &clip);
         data.states[index].blinks.push(BlinkClip {
             start: clip.start,
             len: clip.end - clip.start + 1,
             tracks: clip.tracks,
             hide,
+            follow,
         });
     }
 }
@@ -943,6 +1075,30 @@ mod tests {
         assert_eq!(full.overlay(head, hit, on(&data)), None);
         assert_eq!(full.overlay(stalk, hit, on(&data)), None);
         assert!(full.sample(PartGroup::Body, 0).0 >= 4);
+    }
+
+    #[test]
+    fn el_parpadeo_del_girasol_sigue_la_cabeza() {
+        let data = parse_reanim(&asset("animations/SunFlower/SunFlower.reanim")).unwrap();
+        let full = &data.states[0];
+        let clip = &full.blinks[0];
+        let head = track_named(&data, "anim_idle");
+        let follow = clip.follow.as_ref().expect("el párpado sigue la cabeza");
+
+        assert_eq!(follow.track, head);
+        // La cabeza está en su punto más a la derecha cuando se dibujó el párpado.
+        assert_eq!(follow.reference, 16);
+
+        let reference_local = follow.reference - full.body_start;
+        let at_reference = full.blink_follow(&data, (0, 0), reference_local).unwrap();
+        assert!(at_reference.visible);
+        assert!(at_reference.dx.abs() < 0.01 && at_reference.dy.abs() < 0.01);
+
+        let at_start = full.blink_follow(&data, (0, 0), 0).unwrap();
+        assert!(
+            at_start.dx < -10.0,
+            "el párpado acompaña el balanceo de la cabeza"
+        );
     }
 
     #[test]

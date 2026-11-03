@@ -269,13 +269,23 @@ pub fn pose_part(
             .and_then(|r| r.as_ref())
             .is_some_and(|r| r.active)
     };
-    let (frame, dx) = match anim.overlay(part.track, blink, on) {
+    let (frame, dx, adjust) = match anim.overlay(part.track, blink, on) {
         Some(Overlay::Hidden) => {
             *vis = Visibility::Hidden;
             return;
         }
-        Some(Overlay::Sample(frame)) => (frame, 0.0),
-        None => anim.sample(track.group, local),
+        Some(Overlay::Sample(frame)) => {
+            let adjust = blink.and_then(|hit| anim.blink_follow(data, hit, local));
+            if adjust.is_some_and(|a| !a.visible) {
+                *vis = Visibility::Hidden;
+                return;
+            }
+            (frame, 0.0, adjust)
+        }
+        None => {
+            let (frame, dx) = anim.sample(track.group, local);
+            (frame, dx, None)
+        }
     };
 
     match track.frames.get(frame).and_then(|r| r.as_ref()) {
@@ -283,6 +293,13 @@ pub fn pose_part(
             if !r.active {
                 *vis = Visibility::Hidden;
                 return;
+            }
+            let mut r = r.clone();
+            if let Some(adjust) = adjust {
+                r.x += adjust.dx;
+                r.y += adjust.dy;
+                r.sx *= adjust.sx;
+                r.sy *= adjust.sy;
             }
             *vis = Visibility::Inherited;
             xf.translation = Vec3::new(r.x + dx, -r.y, xf.translation.z);
