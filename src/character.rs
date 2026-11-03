@@ -9,6 +9,7 @@ use crate::zombie_style::PlainStyle;
 use crate::Character;
 use bevy::math::{Affine3A, Vec3A};
 use bevy::prelude::*;
+use bevy::render::view::RenderLayers;
 
 /// Reproductor de animación de un personaje (va en la entidad raíz).
 /// El visor lleva su propio estado en `ViewerState`; la partida usa este.
@@ -94,6 +95,7 @@ pub fn spawn_character(
         entity_name(character),
         root,
         false,
+        None,
     );
     root
 }
@@ -109,6 +111,9 @@ pub struct SpawnReport {
 }
 
 /// Crea los sprites de las piezas visibles del personaje como hijos de `root`.
+///
+/// `layer`, si viene, pone cada sprite en esa capa de render. Sin ella se quedan
+/// en la capa 0, la de la cámara del césped.
 pub fn spawn_parts(
     commands: &mut Commands,
     asset_server: &AssetServer,
@@ -116,6 +121,7 @@ pub fn spawn_parts(
     entity: &str,
     root: Entity,
     verbose: bool,
+    layer: Option<usize>,
 ) -> SpawnReport {
     let mut count = 0;
     let mut skipped = 0;
@@ -172,22 +178,24 @@ pub fn spawn_parts(
         let z = idx as f32 * 0.001;
         let track_name = track.name.clone();
         commands.entity(root).with_children(|parent| {
-            let id = parent
-                .spawn((
-                    Sprite {
-                        image: asset_server.load(&rel),
-                        anchor: bevy::sprite::Anchor::TopLeft,
-                        ..default()
-                    },
-                    Transform::from_xyz(0.0, 0.0, z),
-                    Visibility::default(),
-                    CharacterPart {
-                        track: idx,
-                        current_image: Some(first_image.clone()),
-                        axes: None,
-                    },
-                ))
-                .id();
+            let mut child = parent.spawn((
+                Sprite {
+                    image: asset_server.load(&rel),
+                    anchor: bevy::sprite::Anchor::TopLeft,
+                    ..default()
+                },
+                Transform::from_xyz(0.0, 0.0, z),
+                Visibility::default(),
+                CharacterPart {
+                    track: idx,
+                    current_image: Some(first_image.clone()),
+                    axes: None,
+                },
+            ));
+            if let Some(layer) = layer {
+                child.insert(RenderLayers::layer(layer));
+            }
+            let id = child.id();
             if track_name == "Zombie_flaghand" {
                 flaghand = Some(id);
             }

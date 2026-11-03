@@ -59,8 +59,6 @@ pub struct PlantDef {
     pub max_hp: f32,
     /// Carpeta del `.reanim` y de las texturas.
     pub entity: &'static str,
-    /// Icono del sobre, relativo a `assets/`.
-    pub icon: &'static str,
     pub shooter: Option<ShooterDef>,
     pub producer: Option<ProducerDef>,
     pub mine: Option<MineDef>,
@@ -85,14 +83,13 @@ pub struct ZombieDef {
 }
 
 pub fn plant_def(kind: PlantKind) -> PlantDef {
-    let (name, cost, cooldown, max_hp, entity, icon, shooter, producer, mine) = match kind {
+    let (name, cost, cooldown, max_hp, entity, shooter, producer, mine) = match kind {
         PlantKind::Sunflower => (
             "Girasol",
             50,
             7.5,
             300.0,
             "SunFlower",
-            "textures/SunFlower/SunFlower_head.png",
             None,
             Some(ProducerDef {
                 first: 7.5,
@@ -107,7 +104,6 @@ pub fn plant_def(kind: PlantKind) -> PlantDef {
             7.5,
             300.0,
             "PeaShooter",
-            "textures/PeaShooter/PeaShooter_Head.png",
             Some(pea(0.0, "images/ProjectilePea.png")),
             None,
             None,
@@ -118,29 +114,17 @@ pub fn plant_def(kind: PlantKind) -> PlantDef {
             7.5,
             300.0,
             "SnowPea",
-            "textures/SnowPea/SnowPea_head.png",
             Some(pea(10.0, "images/ProjectileSnowPea.png")),
             None,
             None,
         ),
-        PlantKind::Wallnut => (
-            "Nuez",
-            50,
-            30.0,
-            4000.0,
-            "Wallnut",
-            "textures/Wallnut/Wallnut_body.png",
-            None,
-            None,
-            None,
-        ),
+        PlantKind::Wallnut => ("Nuez", 50, 30.0, 4000.0, "Wallnut", None, None, None),
         PlantKind::PotatoMine => (
             "Papa mina",
             25,
             30.0,
             300.0,
             "PotatoMine",
-            "textures/PotatoMine/PotatoMine_body.png",
             None,
             None,
             Some(MineDef {
@@ -156,7 +140,6 @@ pub fn plant_def(kind: PlantKind) -> PlantDef {
         cooldown,
         max_hp,
         entity,
-        icon,
         shooter,
         producer,
         mine,

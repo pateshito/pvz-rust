@@ -421,6 +421,7 @@ fn spawn_preview(
         &state.entity,
         root,
         true,
+        None,
     );
     if state.plain {
         if let (Some(hand), Some(flag)) = (report.flaghand, loaded.flag.as_ref()) {

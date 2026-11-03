@@ -2,11 +2,13 @@
 //!
 //! La lógica vive en `sim`. Aquí solo se lee el estado, se mandan órdenes y se
 //! crean o se quitan los sprites. Las coordenadas de pantalla están en `board`.
+//! Cada sobre del banco muestra el reposo completo de su planta, no un solo sprite.
 
 use std::collections::HashMap;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use bevy::prelude::*;
+use bevy::render::view::RenderLayers;
 use bevy::window::PrimaryWindow;
 
 use crate::character::{pose_part, spawn_parts};
@@ -22,6 +24,7 @@ use crate::game::sim::{
 use crate::peashooter::{state_index, STATE_IDLE, STATE_SHOOTING};
 use crate::reanim::{ReanimData, BLINK_PERIOD};
 use crate::resources::CharacterLibraries;
+use crate::utils::{asset_exists, assets_dir, image_to_path};
 use crate::zombie_style::PlainStyle;
 use crate::AppState;
 
@@ -34,6 +37,13 @@ const PACKET_Y: f32 = 8.0;
 const PACKET_W: f32 = 50.0;
 const PACKET_H: f32 = 70.0;
 const PACKET_STEP: f32 = 52.0;
+/// Margen del modelo dentro del sobre. Abajo queda el precio.
+const ICON_INSET_X: f32 = 5.0;
+const ICON_TOP: f32 = 4.0;
+const ICON_BOTTOM: f32 = 16.0;
+/// El banco es UI y se dibuja después del césped. El reposo del sobre va en
+/// esta capa, con una cámara que no limpia la pantalla, para quedar encima.
+const PREVIEW_LAYER: usize = 1;
 /// Origen del `.reanim` dentro de la celda. El lanzaguisantes en reposo, con el
 /// ancla arriba a la izquierda, ocupa unos x 6..81 y 10..79: el centro visual
 /// cae en (44, 45). La celda mide 80×100, así que el origen va en (-4, 6).
@@ -76,6 +86,13 @@ struct SeedLabel;
 
 #[derive(Component)]
 struct SeedSlot(usize);
+
+/// Reposo animado dibujado encima de un sobre.
+#[derive(Component)]
+struct SeedPreview {
+    slot: usize,
+    kind: PlantKind,
+}
 
 #[derive(Component)]
 struct Banner;
@@ -142,8 +159,23 @@ pub fn register(app: &mut App) {
         );
 }
 
-fn setup(mut commands: Commands, asset_server: Res<AssetServer>) {
-    commands.spawn((Camera2d, PlayPiece));
+fn setup(
+    mut commands: Commands,
+    asset_server: Res<AssetServer>,
+    libraries: Res<CharacterLibraries>,
+) {
+    // La UI se queda en esta cámara. La otra solo dibuja el modelo del sobre.
+    commands.spawn((Camera2d, IsDefaultUiCamera, PlayPiece));
+    commands.spawn((
+        Camera2d,
+        Camera {
+            order: 1,
+            clear_color: ClearColorConfig::None,
+            ..default()
+        },
+        RenderLayers::layer(PREVIEW_LAYER),
+        PlayPiece,
+    ));
 
     // `background1.jpg` mide 1400×600. La ventana de 800×600 se ve desde x = 220,
     // así que el centro de la foto queda en la x de pantalla 480.
@@ -222,16 +254,6 @@ fn setup(mut commands: Commands, asset_server: Res<AssetServer>) {
                     packet.spawn((
                         Node {
                             position_type: PositionType::Absolute,
-                            top: Val::Px(8.0),
-                            width: Val::Px(34.0),
-                            height: Val::Px(34.0),
-                            ..default()
-                        },
-                        ImageNode::new(asset_server.load(def.icon)),
-                    ));
-                    packet.spawn((
-                        Node {
-                            position_type: PositionType::Absolute,
                             bottom: Val::Px(2.0),
                             ..default()
                         },
@@ -267,6 +289,8 @@ fn setup(mut commands: Commands, asset_server: Res<AssetServer>) {
                 StatusText,
             ));
         });
+
+    spawn_seed_previews(&mut commands, &asset_server, &libraries, &level);
 
     commands.insert_resource(Match(Sim::new(level, fresh_seed(0.0))));
     commands.insert_resource(fresh_control());
@@ -451,6 +475,7 @@ fn animate(
             Without<PeaActor>,
         ),
     >,
+    previews: Query<(&SeedPreview, &Children)>,
 ) {
     for (actor, children, mut root) in &mut plants {
         let Some(plant) = sim.0.plants.iter().find(|plant| plant.id == actor.0) else {
@@ -537,6 +562,34 @@ fn animate(
             );
         }
     }
+
+    for (preview, children) in &previews {
+        let data = libraries.plant(preview.kind);
+        let (index, local) = frame_in(
+            data,
+            preview_state(preview.kind),
+            (control.clock * data.fps) as usize,
+            true,
+        );
+        let phase = (preview.slot as f32 * 0.9) % BLINK_PERIOD;
+        pose_children(
+            &mut parts,
+            children,
+            data,
+            index,
+            local,
+            plant_def(preview.kind).entity,
+            None,
+            &asset_server,
+            control.clock,
+            phase,
+        );
+        let tint = seed_tint(sim.0.seed_status(preview.slot));
+        let mut iter = parts.iter_many_mut(children);
+        while let Some((_, mut sprite, _, _)) = iter.fetch_next() {
+            sprite.color = tint;
+        }
+    }
 }
 
 fn apply_event(
@@ -593,7 +646,15 @@ fn apply_event(
                         PlayPiece,
                     ))
                     .id();
-                spawn_parts(commands, asset_server, &libraries.sun, "Sun", entity, false);
+                spawn_parts(
+                    commands,
+                    asset_server,
+                    &libraries.sun,
+                    "Sun",
+                    entity,
+                    false,
+                    None,
+                );
                 actors.suns.insert(id, entity);
             }
         }
@@ -634,6 +695,7 @@ fn spawn_plant(
         def.entity,
         root,
         false,
+        None,
     );
     Some(root)
 }
@@ -662,6 +724,7 @@ fn spawn_zombie(
         "Zombie",
         root,
         false,
+        None,
     );
     Some(root)
 }
@@ -833,6 +896,204 @@ fn place_hover(
     *vis = Visibility::Inherited;
 }
 
+fn seed_tint(status: SeedStatus) -> Color {
+    match status {
+        SeedStatus::Ready => Color::WHITE,
+        SeedStatus::Cooldown => Color::srgb(0.45, 0.45, 0.45),
+        SeedStatus::NoSun => Color::srgb(0.7, 0.55, 0.5),
+    }
+}
+
+/// Reposo que se enseña en el sobre: el mismo con el que la planta espera en el césped.
+/// La papa es el montículo de `anim_idle`, no la cara suelta.
+fn preview_state(kind: PlantKind) -> &'static str {
+    match kind {
+        PlantKind::PeaShooter | PlantKind::SnowPea => STATE_IDLE,
+        PlantKind::Sunflower => "full",
+        PlantKind::Wallnut | PlantKind::PotatoMine => "anim_idle",
+    }
+}
+
+fn spawn_seed_previews(
+    commands: &mut Commands,
+    asset_server: &AssetServer,
+    libraries: &CharacterLibraries,
+    level: &Level,
+) {
+    for (slot, kind) in level.seeds.iter().copied().enumerate() {
+        let def = plant_def(kind);
+        let data = libraries.plant(kind);
+        let bounds = idle_bounds(data, def.entity, preview_state(kind)).unwrap_or(ScreenBox {
+            min_x: 0.0,
+            min_y: 0.0,
+            max_x: 70.0,
+            max_y: 70.0,
+        });
+        let (scale, root) = fit_preview(slot, bounds);
+        let (x, y) = screen_to_world(root.x, root.y);
+        let entity = commands
+            .spawn((
+                Transform::from_xyz(x, y, 20.0).with_scale(Vec3::new(scale, scale, 1.0)),
+                Visibility::default(),
+                SeedPreview { slot, kind },
+                PlayPiece,
+            ))
+            .id();
+        spawn_parts(
+            commands,
+            asset_server,
+            data,
+            def.entity,
+            entity,
+            false,
+            Some(PREVIEW_LAYER),
+        );
+    }
+}
+
+/// Caja del modelo, en píxeles de pantalla (origen arriba a la izquierda).
+fn icon_box(slot: usize) -> ScreenBox {
+    let min_x = BANK_X + PACKET_X + PACKET_STEP * slot as f32 + ICON_INSET_X;
+    let min_y = BANK_Y + PACKET_Y + ICON_TOP;
+    ScreenBox {
+        min_x,
+        min_y,
+        max_x: min_x + PACKET_W - ICON_INSET_X * 2.0,
+        max_y: min_y + PACKET_H - ICON_TOP - ICON_BOTTOM,
+    }
+}
+
+/// Origen y escala para que `bounds` (espacio del `.reanim`, y hacia abajo) llene la caja.
+fn fit_preview(slot: usize, bounds: ScreenBox) -> (f32, Vec2) {
+    let target = icon_box(slot);
+    let scale =
+        (target.width() / bounds.width().max(1.0)).min(target.height() / bounds.height().max(1.0));
+    let root = Vec2::new(
+        (target.min_x + target.max_x) * 0.5 - (bounds.min_x + bounds.max_x) * 0.5 * scale,
+        (target.min_y + target.max_y) * 0.5 - (bounds.min_y + bounds.max_y) * 0.5 * scale,
+    );
+    (scale, root)
+}
+
+/// Unión, a lo largo de todo el reposo, de las piezas visibles. Incluye rotación y sesgo.
+/// El margen evita que el balanceo roce el borde del sobre.
+fn idle_bounds(data: &ReanimData, entity: &str, state_name: &str) -> Option<ScreenBox> {
+    let state = data.states.iter().find(|state| state.name == state_name)?;
+    let mut sizes: HashMap<String, Option<(f32, f32)>> = HashMap::new();
+    let mut bounds: Option<ScreenBox> = None;
+    for local in 0..state.len.max(1) {
+        for track in &data.tracks {
+            if !track.has_image {
+                continue;
+            }
+            let (frame, dx) = state.sample(track.group, local);
+            let Some(resolved) = track.frames.get(frame).and_then(|frame| frame.as_ref()) else {
+                continue;
+            };
+            if !resolved.active {
+                continue;
+            }
+            let Some(image) = resolved.image.as_deref().or_else(|| {
+                track
+                    .frames
+                    .iter()
+                    .find_map(|frame| frame.as_ref().and_then(|frame| frame.image.as_deref()))
+            }) else {
+                continue;
+            };
+            let Some(rel) = image_to_path(image, entity) else {
+                continue;
+            };
+            if !asset_exists(&rel) {
+                continue;
+            }
+            let Some(size) = cached_png_size(&mut sizes, &rel) else {
+                continue;
+            };
+            let (axis_x, axis_y) = resolved.axes();
+            for (u, v) in [(0.0, 0.0), (size.0, 0.0), (0.0, size.1), (size.0, size.1)] {
+                // `axes` está en el espacio de Bevy (y hacia arriba). La caja es de pantalla.
+                let world_x = u * axis_x[0] - v * axis_y[0];
+                let world_y = u * axis_x[1] - v * axis_y[1];
+                let x = resolved.x + dx + world_x;
+                let y = resolved.y - world_y;
+                bounds
+                    .get_or_insert_with(|| ScreenBox::point(x, y))
+                    .include(x, y);
+            }
+        }
+    }
+    bounds.map(|bounds| bounds.pad(0.06))
+}
+
+fn cached_png_size(
+    cache: &mut HashMap<String, Option<(f32, f32)>>,
+    rel: &str,
+) -> Option<(f32, f32)> {
+    if let Some(size) = cache.get(rel) {
+        return *size;
+    }
+    let size = png_size(rel);
+    cache.insert(rel.to_string(), size);
+    size
+}
+
+fn png_size(rel: &str) -> Option<(f32, f32)> {
+    let bytes = std::fs::read(assets_dir().join(rel)).ok()?;
+    if bytes.len() < 24 || bytes[0..8] != *b"\x89PNG\r\n\x1a\n" || &bytes[12..16] != b"IHDR" {
+        return None;
+    }
+    let width = u32::from_be_bytes(bytes[16..20].try_into().ok()?) as f32;
+    let height = u32::from_be_bytes(bytes[20..24].try_into().ok()?) as f32;
+    (width > 0.0 && height > 0.0).then_some((width, height))
+}
+
+/// Rectángulo en píxeles de pantalla, origen arriba a la izquierda.
+#[derive(Clone, Copy, Debug)]
+struct ScreenBox {
+    min_x: f32,
+    min_y: f32,
+    max_x: f32,
+    max_y: f32,
+}
+
+impl ScreenBox {
+    fn point(x: f32, y: f32) -> Self {
+        Self {
+            min_x: x,
+            min_y: y,
+            max_x: x,
+            max_y: y,
+        }
+    }
+
+    fn include(&mut self, x: f32, y: f32) {
+        self.min_x = self.min_x.min(x);
+        self.min_y = self.min_y.min(y);
+        self.max_x = self.max_x.max(x);
+        self.max_y = self.max_y.max(y);
+    }
+
+    fn width(self) -> f32 {
+        self.max_x - self.min_x
+    }
+
+    fn height(self) -> f32 {
+        self.max_y - self.min_y
+    }
+
+    fn pad(self, fraction: f32) -> Self {
+        let pad_x = self.width() * fraction;
+        let pad_y = self.height() * fraction;
+        Self {
+            min_x: self.min_x - pad_x,
+            min_y: self.min_y - pad_y,
+            max_x: self.max_x + pad_x,
+            max_y: self.max_y + pad_y,
+        }
+    }
+}
+
 fn paint_hud(
     sim: &Sim,
     control: &PlayControl,
@@ -914,11 +1175,7 @@ fn paint_hud(
     }
     for (slot, mut image, mut border) in seed_color.iter_mut() {
         let selected = slot.0 == control.selected;
-        image.color = match sim.seed_status(slot.0) {
-            SeedStatus::Ready => Color::WHITE,
-            SeedStatus::Cooldown => Color::srgb(0.45, 0.45, 0.45),
-            SeedStatus::NoSun => Color::srgb(0.7, 0.55, 0.5),
-        };
+        image.color = seed_tint(sim.seed_status(slot.0));
         border.0 = if selected {
             Color::srgb(1.0, 0.86, 0.25)
         } else {
@@ -1001,4 +1258,115 @@ fn fresh_seed(extra: f32) -> u64 {
         .duration_since(UNIX_EPOCH)
         .map(|elapsed| elapsed.as_secs().wrapping_add(extra as u64))
         .unwrap_or(1)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::plant_anim;
+    use crate::reanim::parse_reanim;
+    use std::collections::HashSet;
+    use std::path::Path;
+
+    fn load(entity: &str) -> ReanimData {
+        let path = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join(format!("assets/animations/{entity}/{entity}.reanim"));
+        let mut data = parse_reanim(&path).unwrap_or_else(|err| panic!("{entity}: {err}"));
+        plant_anim::apply(entity, entity, &mut data)
+            .unwrap_or_else(|err| panic!("{entity}: {err}"));
+        data
+    }
+
+    fn imagenes_activas(data: &ReanimData, state_name: &str) -> usize {
+        let state = data
+            .states
+            .iter()
+            .find(|state| state.name == state_name)
+            .unwrap_or_else(|| panic!("falta {state_name}"));
+        let mut images = HashSet::new();
+        for track in &data.tracks {
+            if !track.has_image {
+                continue;
+            }
+            let (frame, _) = state.sample(track.group, 0);
+            let Some(resolved) = track.frames.get(frame).and_then(|frame| frame.as_ref()) else {
+                continue;
+            };
+            if resolved.active {
+                if let Some(image) = &resolved.image {
+                    images.insert(image.clone());
+                }
+            }
+        }
+        images.len()
+    }
+
+    #[test]
+    fn el_reposo_del_sobre_entra_en_el_icono() {
+        for kind in [
+            PlantKind::Sunflower,
+            PlantKind::PeaShooter,
+            PlantKind::SnowPea,
+            PlantKind::Wallnut,
+            PlantKind::PotatoMine,
+        ] {
+            let def = plant_def(kind);
+            let data = load(def.entity);
+            let state = preview_state(kind);
+            let bounds = idle_bounds(&data, def.entity, state).unwrap_or_else(|| {
+                panic!("{} sin caja de {state}", def.entity);
+            });
+            assert!(
+                bounds.width().is_finite()
+                    && bounds.height().is_finite()
+                    && (20.0..150.0).contains(&bounds.width())
+                    && (20.0..150.0).contains(&bounds.height()),
+                "{} reposo {:.1}×{:.1}",
+                def.entity,
+                bounds.width(),
+                bounds.height()
+            );
+            let (scale, root) = fit_preview(2, bounds);
+            assert!(
+                scale.is_finite() && scale > 0.0,
+                "{} escala {scale}",
+                def.entity
+            );
+            let target = icon_box(2);
+            let min_x = root.x + bounds.min_x * scale;
+            let max_x = root.x + bounds.max_x * scale;
+            let min_y = root.y + bounds.min_y * scale;
+            let max_y = root.y + bounds.max_y * scale;
+            let eps = 0.08;
+            assert!(
+                min_x >= target.min_x - eps
+                    && max_x <= target.max_x + eps
+                    && min_y >= target.min_y - eps
+                    && max_y <= target.max_y + eps,
+                "{} sale del sobre",
+                def.entity
+            );
+            let fill = ((max_x - min_x) / target.width()).max((max_y - min_y) / target.height());
+            assert!(fill > 0.97, "{} llena {fill}", def.entity);
+        }
+    }
+
+    #[test]
+    fn el_sobre_junta_las_piezas_del_reposo() {
+        let casos = [
+            ("SunFlower", "full", 6),
+            ("PeaShooter", STATE_IDLE, 4),
+            ("SnowPea", STATE_IDLE, 4),
+            ("PotatoMine", "anim_idle", 3),
+            ("Wallnut", "anim_idle", 1),
+        ];
+        for (entity, state, minimo) in casos {
+            let data = load(entity);
+            let n = imagenes_activas(&data, state);
+            assert!(
+                n >= minimo,
+                "{entity} en {state} tiene {n} imágenes (mínimo {minimo})"
+            );
+        }
+    }
 }
