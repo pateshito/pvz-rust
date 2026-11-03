@@ -7,6 +7,7 @@ use crate::resources::CharacterLibraries;
 use crate::utils::{asset_exists, entity_name, image_to_path};
 use crate::zombie_style::PlainStyle;
 use crate::Character;
+use bevy::math::{Affine3A, Vec3A};
 use bevy::prelude::*;
 
 /// Reproductor de animación de un personaje (va en la entidad raíz).
@@ -183,6 +184,7 @@ pub fn spawn_parts(
                     CharacterPart {
                         track: idx,
                         current_image: Some(first_image.clone()),
+                        axes: None,
                     },
                 ))
                 .id();
@@ -198,6 +200,30 @@ pub fn spawn_parts(
         skipped,
         missing,
         flaghand,
+    }
+}
+
+/// Dibuja cada pieza con sus ejes reales, sesgo incluido.
+///
+/// `Transform` solo guarda traslación, rotación y escala, así que un sesgo
+/// (`kx != ky`, p. ej. el cactus inclinándose al disparar) se perdía y el cuerpo
+/// se despegaba de la cabeza. El sprite se dibuja con `GlobalTransform`, que sí
+/// admite cualquier matriz afín: se recalcula aquí, tras la propagación de Bevy.
+pub fn apply_part_shear(
+    mut parts: Query<(&Parent, &Transform, &CharacterPart, &mut GlobalTransform)>,
+    parents: Query<&GlobalTransform, Without<CharacterPart>>,
+) {
+    for (parent, transform, part, mut global) in &mut parts {
+        let (Some(axes), Ok(parent_global)) = (part.axes, parents.get(parent.get())) else {
+            continue;
+        };
+        let local = Affine3A::from_cols(
+            Vec3A::new(axes.x_axis.x, axes.x_axis.y, 0.0),
+            Vec3A::new(axes.y_axis.x, axes.y_axis.y, 0.0),
+            Vec3A::Z,
+            Vec3A::from(transform.translation),
+        );
+        *global = GlobalTransform::from(parent_global.affine() * local);
     }
 }
 
@@ -237,6 +263,10 @@ pub fn pose_part(
             xf.translation = Vec3::new(r.x + dx, -r.y, xf.translation.z);
             xf.scale = Vec3::new(r.sx, r.sy, 1.0);
             xf.rotation = Quat::from_rotation_z(-r.kx.to_radians());
+            // Lo anterior solo sirve si `kx == ky`; con sesgo (el cactus al
+            // disparar) manda `axes`.
+            let (ax, ay) = r.axes();
+            part.axes = Some(Mat2::from_cols(Vec2::from(ax), Vec2::from(ay)));
 
             // Cambiar imagen si el track usa múltiples sprites (ej: blink1/blink2)
             if let Some(ref new_img) = r.image {

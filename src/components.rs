@@ -9,6 +9,10 @@ pub struct CharacterRoot {
 pub struct CharacterPart {
     pub track: usize,
     pub current_image: Option<String>,
+    /// Ejes de la pieza en este frame (ver `Resolved::axes`). Si traen sesgo, un
+    /// `Transform` no los puede representar: `character::apply_part_shear` los
+    /// escribe en el `GlobalTransform` después de que Bevy lo calcula.
+    pub axes: Option<Mat2>,
 }
 
 #[derive(Component)]

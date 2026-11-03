@@ -14,6 +14,8 @@ mod zombie_style;
 
 use assets::catalog::EntityCatalog;
 use bevy::prelude::*;
+use bevy::render::view::VisibilitySystems;
+use bevy::transform::TransformSystem;
 use reanim::{parse_reanim, ReanimData};
 use resources::{CharacterLibraries, GameCatalog};
 use std::path::{Path, PathBuf};
@@ -105,6 +107,13 @@ fn main() {
     })
     .insert_resource(GameCatalog(catalog))
     .insert_resource(viewer::ReanimCache::default())
+    // Tras calcular los `GlobalTransform` y antes de decidir qué se ve.
+    .add_systems(
+        PostUpdate,
+        character::apply_part_shear
+            .after(TransformSystem::TransformPropagate)
+            .before(VisibilitySystems::CheckVisibility),
+    )
     .add_systems(OnEnter(AppState::Menu), menu::setup_menu)
     .add_systems(OnExit(AppState::Menu), menu::cleanup_menu)
     .add_systems(

@@ -6,11 +6,31 @@ use std::path::Path;
 pub struct Resolved {
     pub x: f32,
     pub y: f32,
+    /// Ángulo (grados) del eje horizontal de la imagen.
     pub kx: f32,
+    /// Ángulo (grados) del eje vertical de la imagen. Si difiere de `kx` la
+    /// pieza queda sesgada (el cactus se inclina al disparar así).
+    pub ky: f32,
     pub sx: f32,
     pub sy: f32,
     pub image: Option<String>,
     pub active: bool,
+}
+
+impl Resolved {
+    /// Ejes de la pieza en el espacio de Bevy (y hacia arriba), que es el de un
+    /// `Sprite` con ancla arriba a la izquierda. Devuelve `(eje_x, eje_y)`: a
+    /// dónde va un paso hacia la derecha y un paso hacia arriba de la imagen.
+    ///
+    /// Con `kx == ky` es la rotación de siempre (`Quat::from_rotation_z(-kx)`);
+    /// con `kx != ky` es un sesgo, que un `Transform` no puede representar.
+    pub fn axes(&self) -> ([f32; 2], [f32; 2]) {
+        let (kx, ky) = (self.kx.to_radians(), self.ky.to_radians());
+        (
+            [self.sx * kx.cos(), -self.sx * kx.sin()],
+            [self.sy * ky.sin(), self.sy * ky.cos()],
+        )
+    }
 }
 
 /// A qué parte del personaje pertenece un track. Un estado puede leer cada
@@ -149,6 +169,7 @@ pub fn parse_reanim(path: &Path) -> Result<ReanimData, String> {
     let val_x = Regex::new(r"<x>(-?[\d.]+)</x>").unwrap();
     let val_y = Regex::new(r"<y>(-?[\d.]+)</y>").unwrap();
     let val_kx = Regex::new(r"<kx>(-?[\d.]+)</kx>").unwrap();
+    let val_ky = Regex::new(r"<ky>(-?[\d.]+)</ky>").unwrap();
     let val_sx = Regex::new(r"<sx>(-?[\d.]+)</sx>").unwrap();
     let val_sy = Regex::new(r"<sy>(-?[\d.]+)</sy>").unwrap();
     let val_f = Regex::new(r"<f>(-?\d+)</f>").unwrap();
@@ -171,6 +192,7 @@ pub fn parse_reanim(path: &Path) -> Result<ReanimData, String> {
             x: 0.0,
             y: 0.0,
             kx: 0.0,
+            ky: 0.0,
             sx: 1.0,
             sy: 1.0,
             image: None,
@@ -193,6 +215,9 @@ pub fn parse_reanim(path: &Path) -> Result<ReanimData, String> {
             }
             if let Some(v) = get_f(&val_kx) {
                 cur.kx = v;
+            }
+            if let Some(v) = get_f(&val_ky) {
+                cur.ky = v;
             }
             if let Some(v) = get_f(&val_sx) {
                 cur.sx = v;
@@ -339,5 +364,62 @@ mod tests {
             parse_reanim(&asset("animations/PeaShooter/PeaShooter.reanim")).expect("PeaShooter");
         assert!(data.states.iter().any(|s| s.name == "anim_idle"));
         assert!(data.states.iter().all(|s| s.name != "full"));
+    }
+
+    #[test]
+    fn sin_sesgo_los_ejes_son_la_rotacion_de_siempre() {
+        let r = Resolved {
+            x: 0.0,
+            y: 0.0,
+            kx: 30.0,
+            ky: 30.0,
+            sx: 2.0,
+            sy: 0.5,
+            image: None,
+            active: true,
+        };
+        let (ex, ey) = r.axes();
+        // Es lo que hacía `Quat::from_rotation_z(-kx)` con la escala (sx, sy).
+        let a = (-30.0_f32).to_radians();
+        let close = |u: f32, v: f32| (u - v).abs() < 1e-5;
+        assert!(close(ex[0], 2.0 * a.cos()) && close(ex[1], 2.0 * a.sin()));
+        assert!(close(ey[0], -0.5 * a.sin()) && close(ey[1], 0.5 * a.cos()));
+    }
+
+    /// X (espacio Bevy) de la esquina inferior izquierda de la pieza en un frame.
+    fn cactus_base_x(data: &ReanimData, track: &str, frame: usize) -> f32 {
+        let t = data.tracks.iter().find(|t| t.name == track).expect(track);
+        let r = t.frames[frame].as_ref().unwrap();
+        let name = r
+            .image
+            .as_ref()
+            .unwrap()
+            .trim_start_matches("IMAGE_REANIM_CACTUS_")
+            .to_lowercase();
+        let png = std::fs::read(asset(&format!("textures/Cactus/Cactus_{name}.png"))).unwrap();
+        let h = u32::from_be_bytes(png[20..24].try_into().unwrap()) as f32;
+        r.x - h * r.axes().1[0]
+    }
+
+    /// Al disparar, el cactus se inclina hacia delante (sesgo `ky`) pero su base
+    /// sigue en el suelo. Sin el sesgo el cuerpo queda recto y se parte de la
+    /// cabeza: la base se movía ~22 px.
+    #[test]
+    fn el_cactus_se_inclina_sin_despegar_la_base() {
+        let data = parse_reanim(&asset("animations/Cactus/Cactus.reanim")).expect("Cactus");
+        let frames = |name: &str| {
+            let s = data.states.iter().find(|s| s.name == name).expect(name);
+            s.body_start..s.body_start + s.len
+        };
+        let check = |track: &str, anim: &str, idle: &str, max: f32| {
+            let reference = cactus_base_x(&data, track, frames(idle).start);
+            for f in frames(anim) {
+                let d = (cactus_base_x(&data, track, f) - reference).abs();
+                assert!(d <= max, "{track} en {anim}, frame {f}: la base se mueve {d:.1} px (máx {max})");
+            }
+        };
+        check("anim_face", "anim_shooting", "anim_idle", 3.0);
+        check("Cactus_body3", "anim_shootinghigh", "anim_idlehigh", 5.0);
+        check("body_overlay", "anim_shootinghigh", "anim_idlehigh", 1.0);
     }
 }
