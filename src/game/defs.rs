@@ -286,7 +286,7 @@ pub fn zombie_def(kind: ZombieKind) -> ZombieDef {
         ZombieKind::Basic => ZombieDef {
             kind,
             name: "Zombi",
-            max_hp: 270.0,
+            max_hp: 200.0,
             speed: 18.5,
             bite_dps: 100.0,
             // anim_death: 39 frames a 12 fps.
