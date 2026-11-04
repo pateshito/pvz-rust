@@ -14,9 +14,9 @@ use bevy::window::PrimaryWindow;
 use crate::character::{pose_part, spawn_parts};
 use crate::components::CharacterPart;
 use crate::game::board::{
-    cell_at, cell_left, cell_top, screen_to_world, CELL_H, CELL_W, ROWS, SCREEN_H, SCREEN_W,
+    cell_at, cell_left, cell_top, screen_to_world, CELL_H, CELL_W, SCREEN_H, SCREEN_W,
 };
-use crate::game::defs::{plant_def, plant_unlocked_by_level, zombie_def, PlantKind};
+use crate::game::defs::{plant_def, plant_unlocked_by_level, zombie_def, PlantKind, ZombieKind};
 use crate::game::level::Level;
 use crate::game::sim::{
     Id, MowerState, Outcome, SeedStatus, Sim, SimEvent, ZombieStatus, PEA_WIDTH, PEA_Y_OFFSET,
@@ -724,7 +724,7 @@ fn animate(
             index,
             local,
             "Zombie",
-            Some(PlainStyle::Normal),
+            Some(zombie_style(zombie.kind)),
             &asset_server,
             control.clock,
             0.0,
@@ -1368,6 +1368,15 @@ fn place_hover(
         *vis = Visibility::Inherited;
     } else {
         *vis = Visibility::Hidden;
+    }
+}
+
+/// Accesorio que enseña `Zombie.reanim` según el tipo.
+fn zombie_style(kind: ZombieKind) -> PlainStyle {
+    match kind {
+        ZombieKind::Basic => PlainStyle::Normal,
+        ZombieKind::Conehead => PlainStyle::Cone,
+        ZombieKind::Buckethead => PlainStyle::Bucket,
     }
 }
 
@@ -2085,6 +2094,13 @@ mod tests {
         let tint = zombie_tint(10.0).to_srgba();
         assert!(tint.blue > tint.green && tint.green > tint.red);
         assert!(tint.alpha > 0.9);
+    }
+
+    #[test]
+    fn cada_zombie_ensena_su_accesorio() {
+        assert_eq!(zombie_style(ZombieKind::Basic), PlainStyle::Normal);
+        assert_eq!(zombie_style(ZombieKind::Conehead), PlainStyle::Cone);
+        assert_eq!(zombie_style(ZombieKind::Buckethead), PlainStyle::Bucket);
     }
 
     #[test]

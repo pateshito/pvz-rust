@@ -16,6 +16,8 @@ pub enum PlantKind {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum ZombieKind {
     Basic,
+    Conehead,
+    Buckethead,
 }
 
 /// Todas las plantas que puede mostrar el selector, en el orden de la etapa 1.
@@ -293,5 +295,41 @@ pub fn zombie_def(kind: ZombieKind) -> ZombieDef {
             hit_right: 75.0,
             bite_reach: 20.0,
         },
+        ZombieKind::Conehead => ZombieDef {
+            kind,
+            name: "Zombi con cono",
+            max_hp: 420.0,
+            speed: 18.5,
+            bite_dps: 100.0,
+            death_time: 39.0 / 12.0,
+            hit_left: 35.0,
+            hit_right: 75.0,
+            bite_reach: 20.0,
+        },
+        ZombieKind::Buckethead => ZombieDef {
+            kind,
+            name: "Zombi con cubeta",
+            max_hp: 950.0,
+            speed: 18.5,
+            bite_dps: 100.0,
+            death_time: 39.0 / 12.0,
+            hit_left: 35.0,
+            hit_right: 75.0,
+            bite_reach: 20.0,
+        },
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn los_cascos_aguantan_mas_golpes() {
+        let basic = zombie_def(ZombieKind::Basic).max_hp;
+        let cone = zombie_def(ZombieKind::Conehead).max_hp;
+        let bucket = zombie_def(ZombieKind::Buckethead).max_hp;
+        assert!(basic < cone, "el cono protege");
+        assert!(cone < bucket, "la cubeta protege más");
     }
 }

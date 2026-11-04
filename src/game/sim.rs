@@ -25,6 +25,8 @@ pub const SUN_PICK_RADIUS: f32 = 40.0;
 
 /// Origen x de un zombie recién nacido (justo fuera de la pantalla).
 pub const ZOMBIE_SPAWN_X: f32 = SCREEN_W + 10.0;
+/// Separación fija entre dos zombies que comparten fila en la misma oleada.
+pub const ZOMBIE_STAGGER_X: f32 = 30.0;
 
 /// Origen x de la cortadora en reposo, a la izquierda del césped.
 pub const MOWER_START_X: f32 = LAWN_LEFT - 70.0;
@@ -440,8 +442,9 @@ impl Sim {
             let mut used = Vec::new();
             for kind in kinds {
                 let row = self.choose_row(&used);
+                let repeat = used.iter().filter(|&&seen| seen == row).count();
                 used.push(row);
-                self.spawn_zombie(kind, row);
+                self.spawn_zombie(kind, row, repeat as f32 * ZOMBIE_STAGGER_X);
             }
         }
     }
@@ -463,16 +466,16 @@ impl Sim {
         rows[self.rng.gen_range(0..rows.len())]
     }
 
-    fn spawn_zombie(&mut self, kind: ZombieKind, row: usize) {
+    fn spawn_zombie(&mut self, kind: ZombieKind, row: usize, extra_x: f32) {
         let def = zombie_def(kind);
         let id = self.alloc_id();
         let zombie = Zombie {
             id,
             kind,
             row,
-            x: ZOMBIE_SPAWN_X + self.rng.gen_range(0.0..40.0),
+            x: ZOMBIE_SPAWN_X + extra_x,
             hp: def.max_hp,
-            speed_mul: self.rng.gen_range(0.9..1.1),
+            speed_mul: 1.0,
             chill: 0.0,
             status: ZombieStatus::Walking,
         };
@@ -1253,6 +1256,54 @@ mod tests {
         rows.sort_unstable();
         rows.dedup();
         assert_eq!(rows.len(), ROWS);
+    }
+
+    #[test]
+    fn el_spawn_solo_elige_la_fila() {
+        let mut sim = Sim::new(
+            Level {
+                waves: vec![Wave::with_counts(
+                    0.0,
+                    &[
+                        (ZombieKind::Basic, 3),
+                        (ZombieKind::Conehead, 2),
+                        (ZombieKind::Buckethead, 1),
+                    ],
+                )],
+                ..empty_level()
+            },
+            7,
+        );
+        sim.step(DT);
+        assert_eq!(sim.zombies.len(), 6);
+        assert!(sim.zombies.iter().all(|z| z.speed_mul == 1.0));
+
+        let mut by_row = std::collections::HashMap::new();
+        let walked = zombie_def(ZombieKind::Basic).speed * DT;
+        for zombie in &sim.zombies {
+            let first = ZOMBIE_SPAWN_X - walked;
+            let second = ZOMBIE_SPAWN_X + ZOMBIE_STAGGER_X - walked;
+            assert!(
+                (zombie.x - first).abs() < 0.01 || (zombie.x - second).abs() < 0.01,
+                "x inesperada: {}",
+                zombie.x
+            );
+            by_row
+                .entry(zombie.row)
+                .or_insert_with(Vec::new)
+                .push(zombie.x);
+        }
+        let repeated: Vec<&Vec<f32>> = by_row.values().filter(|xs| xs.len() == 2).collect();
+        assert_eq!(repeated.len(), 1, "con seis zombies una fila se repite");
+        assert!(
+            (repeated[0][0] - repeated[0][1]).abs() == ZOMBIE_STAGGER_X,
+            "los dos de la misma fila salen escalonados"
+        );
+
+        let count = |kind| sim.zombies.iter().filter(|z| z.kind == kind).count();
+        assert_eq!(count(ZombieKind::Basic), 3);
+        assert_eq!(count(ZombieKind::Conehead), 2);
+        assert_eq!(count(ZombieKind::Buckethead), 1);
     }
 
     #[test]
