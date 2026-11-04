@@ -296,10 +296,7 @@ pub fn pose_part(
             }
             let mut r = r.clone();
             if let Some(adjust) = adjust {
-                r.x += adjust.dx;
-                r.y += adjust.dy;
-                r.sx *= adjust.sx;
-                r.sy *= adjust.sy;
+                adjust.apply(&mut r);
             }
             *vis = Visibility::Inherited;
             xf.translation = Vec3::new(r.x + dx, -r.y, xf.translation.z);

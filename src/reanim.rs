@@ -86,12 +86,20 @@ pub struct FollowHead {
 }
 
 /// Ajuste de un párpado para seguir el frame actual de la cabeza.
+///
+/// El párpado se dibujó para la pose de referencia: se pasa de esa pose a la
+/// actual con la misma transformación que sufre la cabeza, escala incluida.
 #[derive(Clone, Copy, Debug)]
 pub struct FollowAdjust {
-    pub dx: f32,
-    pub dy: f32,
-    pub sx: f32,
-    pub sy: f32,
+    /// Cabeza en el frame de referencia.
+    pub from_x: f32,
+    pub from_y: f32,
+    /// Cabeza en el frame actual.
+    pub to_x: f32,
+    pub to_y: f32,
+    /// Escala actual / escala de referencia.
+    pub ratio_x: f32,
+    pub ratio_y: f32,
     /// La cabeza no se ve en este frame: el párpado tampoco.
     pub visible: bool,
 }
@@ -99,12 +107,22 @@ pub struct FollowAdjust {
 impl FollowAdjust {
     fn hidden() -> Self {
         Self {
-            dx: 0.0,
-            dy: 0.0,
-            sx: 1.0,
-            sy: 1.0,
+            from_x: 0.0,
+            from_y: 0.0,
+            to_x: 0.0,
+            to_y: 0.0,
+            ratio_x: 1.0,
+            ratio_y: 1.0,
             visible: false,
         }
+    }
+
+    /// Lleva la pieza dibujada para la cabeza de referencia a la pose actual.
+    pub fn apply(&self, r: &mut Resolved) {
+        r.x = self.to_x + self.ratio_x * (r.x - self.from_x);
+        r.y = self.to_y + self.ratio_y * (r.y - self.from_y);
+        r.sx *= self.ratio_x;
+        r.sy *= self.ratio_y;
     }
 }
 
@@ -229,8 +247,9 @@ impl AnimState {
         }
     }
 
-    /// Desplazamiento y escala que hay que sumar al párpado para que siga la
-    /// cabeza en el frame `local`. `None` si el clip no tiene cabeza asociada.
+    /// Ajuste que lleva el párpado de la pose de referencia a la actual, con
+    /// la posición y la escala de la cabeza. `None` si el clip no tiene cabeza
+    /// asociada.
     pub fn blink_follow(
         &self,
         data: &ReanimData,
@@ -249,14 +268,16 @@ impl AnimState {
         }
         let reference = head.frames.get(follow.reference).and_then(|r| r.as_ref())?;
         Some(FollowAdjust {
-            dx: now.x - reference.x,
-            dy: now.y - reference.y,
-            sx: if reference.sx != 0.0 {
+            from_x: reference.x,
+            from_y: reference.y,
+            to_x: now.x,
+            to_y: now.y,
+            ratio_x: if reference.sx != 0.0 {
                 now.sx / reference.sx
             } else {
                 1.0
             },
-            sy: if reference.sy != 0.0 {
+            ratio_y: if reference.sy != 0.0 {
                 now.sy / reference.sy
             } else {
                 1.0
@@ -535,33 +556,37 @@ fn head_follow(data: &ReanimData, state: &AnimState, clip: &RawClip) -> Option<F
         return None;
     }
     let track = heads[0];
-    let (ref_x, ref_y) = clip.tracks.iter().find_map(|&ti| {
+    let (ref_x, ref_y, blink_sx, blink_sy) = clip.tracks.iter().find_map(|&ti| {
         (clip.start..=clip.end).find_map(|f| {
             let r = data.tracks.get(ti)?.frames.get(f)?.as_ref()?;
-            (r.active && r.image.is_some()).then_some((r.x, r.y))
+            (r.active && r.image.is_some()).then_some((r.x, r.y, r.sx, r.sy))
         })
     })?;
+    // El párpado se dibujó sobre una pose concreta de la cabeza. Primero se
+    // busca la escala, que es lo que deforma los ojos si no coincide; entre las
+    // poses con la misma escala, la más cercana a donde va el párpado.
     let reference = frames
         .iter()
         .copied()
         .filter(|&f| frame_on(&data.tracks[track], f))
         .min_by(|&a, &b| {
-            head_distance(&data.tracks[track], a, ref_x, ref_y).total_cmp(&head_distance(
-                &data.tracks[track],
-                b,
-                ref_x,
-                ref_y,
-            ))
+            let ka = head_key(&data.tracks[track], a, blink_sx, blink_sy, ref_x, ref_y);
+            let kb = head_key(&data.tracks[track], b, blink_sx, blink_sy, ref_x, ref_y);
+            ka.0.total_cmp(&kb.0).then_with(|| ka.1.total_cmp(&kb.1))
         })?;
     Some(FollowHead { track, reference })
 }
 
-fn head_distance(track: &Track, frame: usize, x: f32, y: f32) -> f32 {
-    track
-        .frames
-        .get(frame)
-        .and_then(|r| r.as_ref())
-        .map_or(f32::INFINITY, |r| (r.x - x).powi(2) + (r.y - y).powi(2))
+/// Escala y posición de una pose de la cabeza frente al párpado: primero la
+/// diferencia de escala, después la distancia al párpado.
+fn head_key(track: &Track, frame: usize, sx: f32, sy: f32, x: f32, y: f32) -> (f32, f32) {
+    match track.frames.get(frame).and_then(|r| r.as_ref()) {
+        Some(r) => (
+            (r.sx - sx).abs() + (r.sy - sy).abs(),
+            (r.x - x).powi(2) + (r.y - y).powi(2),
+        ),
+        None => (f32::INFINITY, f32::INFINITY),
+    }
 }
 
 /// Reposo, o la papa ya armada: ahí es donde el personaje se queda quieto.
@@ -1086,19 +1111,66 @@ mod tests {
         let follow = clip.follow.as_ref().expect("el párpado sigue la cabeza");
 
         assert_eq!(follow.track, head);
-        // La cabeza está en su punto más a la derecha cuando se dibujó el párpado.
-        assert_eq!(follow.reference, 16);
+        let blink_track = track_named(&data, "anim_blink");
+        let blink_ref = (clip.start..=clip.start + clip.len)
+            .find_map(|f| {
+                data.tracks[blink_track]
+                    .frames
+                    .get(f)
+                    .and_then(|r| r.as_ref())
+            })
+            .expect("el párpado tiene frames");
+        let head_ref = data.tracks[head].frames[follow.reference]
+            .as_ref()
+            .expect("la referencia tiene cabeza");
+        assert!(
+            (head_ref.sx - blink_ref.sx).abs() < 0.01 && (head_ref.sy - blink_ref.sy).abs() < 0.01,
+            "la referencia usa la escala con la que se dibujó el párpado"
+        );
 
+        // En la referencia el párpado conserva su pose original.
         let reference_local = follow.reference - full.body_start;
         let at_reference = full.blink_follow(&data, (0, 0), reference_local).unwrap();
         assert!(at_reference.visible);
-        assert!(at_reference.dx.abs() < 0.01 && at_reference.dy.abs() < 0.01);
+        let mut r = blink_ref.clone();
+        at_reference.apply(&mut r);
+        assert!((r.x - blink_ref.x).abs() < 0.01 && (r.y - blink_ref.y).abs() < 0.01);
+        assert!((r.sx - blink_ref.sx).abs() < 0.01 && (r.sy - blink_ref.sy).abs() < 0.01);
 
-        let at_start = full.blink_follow(&data, (0, 0), 0).unwrap();
-        assert!(
-            at_start.dx < -10.0,
-            "el párpado acompaña el balanceo de la cabeza"
-        );
+        // En todos los frames el párpado escala igual que la cabeza: si no, se
+        // estira o se aplasta al parpadear.
+        let head_at = |local: usize| {
+            let (frame, _) = full.sample(PartGroup::Head, local);
+            data.tracks[head].frames[frame]
+                .as_ref()
+                .expect("la cabeza se ve")
+                .clone()
+        };
+        for local in 0..full.len {
+            let adjust = full.blink_follow(&data, (0, 0), local).unwrap();
+            let mut r = blink_ref.clone();
+            adjust.apply(&mut r);
+            let h = head_at(local);
+            assert!(
+                (r.sx - h.sx).abs() < 0.001 && (r.sy - h.sy).abs() < 0.001,
+                "frame {local}: párpado ({}, {}) vs cabeza ({}, {})",
+                r.sx,
+                r.sy,
+                h.sx,
+                h.sy
+            );
+        }
+
+        // Y acompaña el balanceo horizontal de la cabeza.
+        let place = |local: usize| {
+            let adjust = full.blink_follow(&data, (0, 0), local).unwrap();
+            let mut r = blink_ref.clone();
+            adjust.apply(&mut r);
+            r.x
+        };
+        let left = place(0);
+        let right = place(12);
+        assert!(right > left + 5.0, "el párpado acompaña el balanceo");
     }
 
     #[test]
