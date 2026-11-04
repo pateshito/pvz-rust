@@ -385,7 +385,7 @@ pub fn plant_select_interaction(
     mut commands: Commands,
     asset_server: Res<AssetServer>,
     libraries: Res<CharacterLibraries>,
-    progress: Res<LevelProgress>,
+    mut progress: ResMut<LevelProgress>,
     mut loadout: ResMut<PlantLoadout>,
     mut notice: Query<&mut Text, With<PlantNotice>>,
     mut cards: Query<
@@ -444,6 +444,7 @@ pub fn plant_select_interaction(
     }
 
     if dirty {
+        loadout.save_into(&mut progress);
         for entity in &screen {
             commands.entity(entity).despawn_recursive();
         }

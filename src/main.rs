@@ -111,6 +111,9 @@ fn main() {
         &reanim_path(&catalog, "LawnMower", "LawnMower"),
     );
 
+    let progress = LevelProgress::load();
+    let loadout = PlantLoadout::from_progress(&progress);
+
     let mut app = App::new();
     app.add_plugins(
         DefaultPlugins
@@ -139,8 +142,8 @@ fn main() {
         mower: mower_data,
     })
     .insert_resource(GameCatalog(catalog))
-    .insert_resource(LevelProgress::load())
-    .insert_resource(PlantLoadout::default())
+    .insert_resource(progress)
+    .insert_resource(loadout)
     .insert_resource(viewer::ReanimCache::default())
     // Tras calcular los `GlobalTransform` y antes de decidir qué se ve.
     .add_systems(

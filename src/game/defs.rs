@@ -1,7 +1,9 @@
 //! Definiciones de plantas y zombies. Para añadir uno nuevo: una variante en el
 //! enum, su entrada en `plant_def`/`zombie_def` y su aspecto en `view.rs`.
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+use serde::{Deserialize, Serialize};
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum PlantKind {
     PeaShooter,
     Sunflower,

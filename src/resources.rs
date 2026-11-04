@@ -49,18 +49,22 @@ impl CharacterLibraries {
 }
 
 /// Progreso de la campaña. `cleared` cuenta los niveles superados desde el
-/// primero; el nivel `cleared` es el siguiente desbloqueado.
+/// primero; el nivel `cleared` es el siguiente desbloqueado. También guarda el
+/// equipamiento, en el orden de las plantas elegidas.
 #[derive(Resource, Debug, Clone, Default, Serialize, Deserialize)]
 pub struct LevelProgress {
     pub cleared: usize,
     pub selected: usize,
+    #[serde(default)]
+    pub loadout: Vec<PlantKind>,
 }
 
 impl LevelProgress {
     const FILE: &'static str = "progress.json";
 
     /// Lee el progreso de `saves/progress.json`. Si no existe o está roto,
-    /// empieza desde cero.
+    /// empieza desde cero. Las plantas del equipamiento que aún no estén
+    /// desbloqueadas se quitan y el archivo se reescribe.
     pub fn load() -> Self {
         let path = crate::utils::saves_dir().join(Self::FILE);
         let mut progress = match Self::load_from(&path) {
@@ -75,7 +79,32 @@ impl LevelProgress {
         };
         progress.cleared = progress.cleared.min(LEVEL_COUNT);
         progress.selected = progress.selected.min(LEVEL_COUNT.saturating_sub(1));
+        if progress.sanitize_loadout() {
+            println!("💾 Equipamiento ajustado a las plantas desbloqueadas.");
+            progress.save();
+        }
         progress
+    }
+
+    /// Quita del equipamiento las plantas bloqueadas o repetidas, respeta el
+    /// orden guardado y deja el equipamiento por defecto si no queda ninguna.
+    /// Devuelve `true` si hubo cambios.
+    pub fn sanitize_loadout(&mut self) -> bool {
+        let saved = self.loadout.clone();
+        let mut clean: Vec<PlantKind> = Vec::new();
+        for &kind in &saved {
+            if clean.len() >= MAX_LOADOUT || clean.contains(&kind) {
+                continue;
+            }
+            if self.plant_unlocked(kind) {
+                clean.push(kind);
+            }
+        }
+        if clean.is_empty() {
+            clean = PlantLoadout::default().chosen;
+        }
+        self.loadout = clean;
+        self.loadout != saved
     }
 
     fn load_from(path: &Path) -> Result<Self, String> {
@@ -140,6 +169,22 @@ impl Default for PlantLoadout {
 }
 
 impl PlantLoadout {
+    /// Reconstruye el equipamiento con lo guardado en el progreso.
+    pub fn from_progress(progress: &LevelProgress) -> Self {
+        let chosen = if progress.loadout.is_empty() {
+            Self::default().chosen
+        } else {
+            progress.loadout.clone()
+        };
+        Self { chosen }
+    }
+
+    /// Copia el equipamiento al progreso y lo guarda en disco.
+    pub fn save_into(&self, progress: &mut LevelProgress) {
+        progress.loadout = self.chosen.clone();
+        progress.save();
+    }
+
     pub fn toggle(&mut self, kind: PlantKind) -> Result<(), &'static str> {
         if let Some(index) = self.chosen.iter().position(|&chosen| chosen == kind) {
             if self.chosen.len() == 1 {
@@ -279,6 +324,56 @@ mod tests {
             seen.push(kind);
         }
         assert_eq!(seen.len(), LEVEL_COUNT);
+    }
+
+    #[test]
+    fn el_equipamiento_se_guarda_con_el_progreso() {
+        let progress = LevelProgress {
+            cleared: 2,
+            selected: 1,
+            loadout: vec![PlantKind::Sunflower, PlantKind::CherryBomb],
+        };
+        let text = serde_json::to_string(&progress).unwrap();
+        let back: LevelProgress = serde_json::from_str(&text).unwrap();
+        assert_eq!(back.cleared, 2);
+        assert_eq!(back.selected, 1);
+        assert_eq!(back.loadout, progress.loadout);
+        assert_eq!(PlantLoadout::from_progress(&back).chosen, progress.loadout);
+
+        let viejo: LevelProgress = serde_json::from_str(r#"{"cleared":1,"selected":0}"#).unwrap();
+        assert!(
+            viejo.loadout.is_empty(),
+            "un guardado viejo no trae equipamiento"
+        );
+    }
+
+    #[test]
+    fn el_equipamiento_quita_las_plantas_bloqueadas() {
+        let mut progress = LevelProgress {
+            cleared: 1,
+            selected: 0,
+            loadout: vec![
+                PlantKind::CherryBomb, // desbloqueada al superar el nivel 0
+                PlantKind::Wallnut,    // todavía bloqueada
+                PlantKind::Sunflower,
+                PlantKind::CherryBomb, // repetida
+            ],
+        };
+        assert!(progress.sanitize_loadout());
+        assert_eq!(
+            progress.loadout,
+            vec![PlantKind::CherryBomb, PlantKind::Sunflower],
+            "conserva el orden y quita lo bloqueado"
+        );
+        assert!(!progress.sanitize_loadout());
+    }
+
+    #[test]
+    fn un_equipamiento_vacio_vuelve_al_de_fabrica() {
+        let mut progress = LevelProgress::default();
+        assert!(progress.sanitize_loadout());
+        assert_eq!(progress.loadout, PlantLoadout::default().chosen);
+        assert!(!progress.sanitize_loadout());
     }
 
     #[test]
