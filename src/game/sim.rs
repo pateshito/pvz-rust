@@ -25,8 +25,8 @@ pub const SUN_PICK_RADIUS: f32 = 40.0;
 
 /// Origen x de un zombie recién nacido (justo fuera de la pantalla).
 pub const ZOMBIE_SPAWN_X: f32 = SCREEN_W + 10.0;
-/// Separación fija entre dos zombies que comparten fila en la misma oleada.
-pub const ZOMBIE_STAGGER_X: f32 = 30.0;
+/// Segundos fijos entre dos zombies de la misma oleada.
+pub const ZOMBIE_SPAWN_INTERVAL: f32 = 1.5;
 
 /// Origen x de la cortadora en reposo, a la izquierda del césped.
 pub const MOWER_START_X: f32 = LAWN_LEFT - 70.0;
@@ -187,6 +187,18 @@ pub enum SimEvent {
     Lost,
 }
 
+/// Oleada en curso: suelta un zombie cada `ZOMBIE_SPAWN_INTERVAL` segundos.
+struct PendingWave {
+    /// Momento del próximo spawn.
+    next_at: f32,
+    /// Zombies de la oleada, en orden de salida.
+    kinds: Vec<ZombieKind>,
+    /// Siguiente zombie de la lista.
+    cursor: usize,
+    /// Filas ya usadas por esta oleada, para repartir carriles.
+    used: Vec<usize>,
+}
+
 pub struct Sim {
     pub level: Level,
     pub time: f32,
@@ -204,6 +216,8 @@ pub struct Sim {
     pub killed: usize,
     grid: [[Option<Id>; COLS]; ROWS],
     next_wave: usize,
+    /// Oleadas ya empezadas que aún sueltan zombies.
+    pending: Vec<PendingWave>,
     sky_timer: f32,
     next_id: Id,
     rng: StdRng,
@@ -240,6 +254,7 @@ impl Sim {
             killed: 0,
             grid: [[None; COLS]; ROWS],
             next_wave: 0,
+            pending: Vec::new(),
             sky_timer: level.first_sky_sun,
             next_id: 1,
             rng: StdRng::seed_from_u64(rng_seed),
@@ -431,20 +446,41 @@ impl Sim {
     }
 
     fn update_waves(&mut self) {
+        // Empieza las oleadas cuya hora ya llegó; todavía no sueltan a todos.
         while let Some(wave) = self.level.waves.get(self.next_wave) {
             if self.time < wave.time {
                 break;
             }
-            let kinds = wave.zombies.clone();
+            self.pending.push(PendingWave {
+                next_at: wave.time,
+                kinds: wave.zombies.clone(),
+                cursor: 0,
+                used: Vec::new(),
+            });
             self.next_wave += 1;
-            // Una oleada pequeña reparte sus zombies por filas distintas antes
-            // de repetir carril. Las grandes también evitan amontonarse.
-            let mut used = Vec::new();
-            for kind in kinds {
+        }
+
+        // Cada oleada suelta un zombie por intervalo; la fila se elige al azar.
+        let mut i = 0;
+        while i < self.pending.len() {
+            loop {
+                let wave = &self.pending[i];
+                if wave.cursor >= wave.kinds.len() || self.time < wave.next_at {
+                    break;
+                }
+                let kind = wave.kinds[wave.cursor];
+                let used = wave.used.clone();
                 let row = self.choose_row(&used);
-                let repeat = used.iter().filter(|&&seen| seen == row).count();
-                used.push(row);
-                self.spawn_zombie(kind, row, repeat as f32 * ZOMBIE_STAGGER_X);
+                let wave = &mut self.pending[i];
+                wave.used.push(row);
+                wave.cursor += 1;
+                wave.next_at += ZOMBIE_SPAWN_INTERVAL;
+                self.spawn_zombie(kind, row);
+            }
+            if self.pending[i].cursor >= self.pending[i].kinds.len() {
+                self.pending.remove(i);
+            } else {
+                i += 1;
             }
         }
     }
@@ -466,14 +502,14 @@ impl Sim {
         rows[self.rng.gen_range(0..rows.len())]
     }
 
-    fn spawn_zombie(&mut self, kind: ZombieKind, row: usize, extra_x: f32) {
+    fn spawn_zombie(&mut self, kind: ZombieKind, row: usize) {
         let def = zombie_def(kind);
         let id = self.alloc_id();
         let zombie = Zombie {
             id,
             kind,
             row,
-            x: ZOMBIE_SPAWN_X + extra_x,
+            x: ZOMBIE_SPAWN_X,
             hp: def.max_hp,
             speed_mul: 1.0,
             chill: 0.0,
@@ -841,7 +877,7 @@ impl Sim {
             self.events.push(SimEvent::Lost);
             return;
         }
-        let all_out = self.next_wave >= self.level.waves.len();
+        let all_out = self.next_wave >= self.level.waves.len() && self.pending.is_empty();
         if all_out && self.zombies.iter().all(|z| !z.is_alive()) {
             self.outcome = Outcome::Won;
             self.events.push(SimEvent::Won);
@@ -1214,6 +1250,8 @@ mod tests {
             7,
         );
         sim.step(DT);
+        assert_eq!(sim.zombies.len(), 1, "salen de uno en uno");
+        run(&mut sim, ZOMBIE_SPAWN_INTERVAL + 0.1);
         assert_eq!(sim.zombies.len(), 2);
         assert_ne!(
             sim.zombies[0].row, sim.zombies[1].row,
@@ -1252,6 +1290,7 @@ mod tests {
             7,
         );
         sim.step(DT);
+        run(&mut sim, ZOMBIE_SPAWN_INTERVAL * (ROWS as f32 - 1.0) + 0.1);
         let mut rows: Vec<usize> = sim.zombies.iter().map(|z| z.row).collect();
         rows.sort_unstable();
         rows.dedup();
@@ -1274,31 +1313,24 @@ mod tests {
             },
             7,
         );
-        sim.step(DT);
-        assert_eq!(sim.zombies.len(), 6);
-        assert!(sim.zombies.iter().all(|z| z.speed_mul == 1.0));
-
-        let mut by_row = std::collections::HashMap::new();
-        let walked = zombie_def(ZombieKind::Basic).speed * DT;
-        for zombie in &sim.zombies {
-            let first = ZOMBIE_SPAWN_X - walked;
-            let second = ZOMBIE_SPAWN_X + ZOMBIE_STAGGER_X - walked;
-            assert!(
-                (zombie.x - first).abs() < 0.01 || (zombie.x - second).abs() < 0.01,
-                "x inesperada: {}",
-                zombie.x
-            );
-            by_row
-                .entry(zombie.row)
-                .or_insert_with(Vec::new)
-                .push(zombie.x);
+        let mut spawn_times = Vec::new();
+        for _ in 0..((ZOMBIE_SPAWN_INTERVAL * 6.0 + 1.0) / DT) as usize {
+            sim.step(DT);
+            for event in sim.take_events() {
+                if let SimEvent::ZombieSpawned(_) = event {
+                    spawn_times.push(sim.time);
+                }
+            }
         }
-        let repeated: Vec<&Vec<f32>> = by_row.values().filter(|xs| xs.len() == 2).collect();
-        assert_eq!(repeated.len(), 1, "con seis zombies una fila se repite");
-        assert!(
-            (repeated[0][0] - repeated[0][1]).abs() == ZOMBIE_STAGGER_X,
-            "los dos de la misma fila salen escalonados"
-        );
+        assert_eq!(sim.zombies.len(), 6);
+        assert_eq!(spawn_times.len(), 6);
+        assert!(sim.zombies.iter().all(|z| z.speed_mul == 1.0));
+        for pair in spawn_times.windows(2) {
+            assert!(
+                (pair[1] - pair[0] - ZOMBIE_SPAWN_INTERVAL).abs() < 0.02,
+                "salen cada {ZOMBIE_SPAWN_INTERVAL} s: {spawn_times:?}"
+            );
+        }
 
         let count = |kind| sim.zombies.iter().filter(|z| z.kind == kind).count();
         assert_eq!(count(ZombieKind::Basic), 3);
@@ -1319,6 +1351,29 @@ mod tests {
         run(&mut sim, 0.1);
         assert_eq!(sim.outcome, Outcome::Won);
         assert!(sim.take_events().contains(&SimEvent::Won));
+    }
+
+    #[test]
+    fn la_partida_no_termina_mientras_quedan_zombies_por_salir() {
+        let mut sim = Sim::new(
+            Level {
+                waves: vec![Wave::with_counts(0.0, &[(ZombieKind::Basic, 2)])],
+                ..empty_level()
+            },
+            3,
+        );
+        let alive = |sim: &Sim| sim.zombies.iter().filter(|z| z.is_alive()).count();
+        sim.step(DT);
+        assert_eq!(alive(&sim), 1, "el segundo todavía no salió");
+        sim.zombies[0].hp = 0.0;
+        run(&mut sim, 0.1);
+        assert_eq!(sim.outcome, Outcome::Playing, "falta el segundo");
+
+        run(&mut sim, ZOMBIE_SPAWN_INTERVAL);
+        assert_eq!(alive(&sim), 1, "salió el segundo");
+        sim.zombies.iter_mut().find(|z| z.is_alive()).unwrap().hp = 0.0;
+        run(&mut sim, 0.1);
+        assert_eq!(sim.outcome, Outcome::Won);
     }
 
     #[test]
